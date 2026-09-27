@@ -1,10 +1,38 @@
 # Windows VM — an Omarchy bar widget
 
-An icon that exists only while the Omarchy Windows VM (`omarchy-windows-vm`)
-is running. Click it for what the VM is costing the host and the controls to
-get back to it or shut it down.
+Your Windows VM, one click away. It's an icon that turns up in the bar only
+while Omarchy's Windows VM (`omarchy-windows-vm`) is running.
 
-![The Windows VM panel](preview.png)
+![Windows VM: an icon that appears only while the VM runs, and what it's costing your machine](preview.png)
+
+## What you get
+
+Omarchy can run Windows in a VM, but once it's going, it's easy to lose
+track of: is it still running? How much is it eating? How do I get back to
+it? This answers all three from the bar.
+
+**It's only there when it matters.** No VM, no icon. Start Windows and the
+icon appears. Shut it down and it's gone again.
+
+![The bar with the VM off, and with it running](screenshots/1-appears.png)
+
+**What it's costing you.** Click it for the VM's CPU, memory, disk and network,
+measured two ways: against what you gave the guest, and against your whole
+machine. You can see whether it's the VM making your laptop hot, or something
+else.
+
+![The VM busy while you're connected: CPU, memory and disk against the guest and the host](screenshots/2-connected.png)
+
+**Straight back in.** **Connect** opens the Windows desktop, or brings it to
+the front if it's already open. **Console** opens the VM's web console, and
+**Shared** opens the folder you share with it. **Stop** shuts Windows down
+cleanly. The keyboard works too: `c`, `w`, `f`, `s`.
+
+![The VM idle and not connected, one click from Connect](screenshots/3-idle.png)
+
+**Never nags.** Watching the VM never asks for a password, because every number
+comes from files you can already read. Only Stop asks, through Omarchy's own
+prompt, as it always does.
 
 ## Install
 

@@ -5,14 +5,23 @@
   "version": "1.0.0",
   "author": "Jon",
   "license": "MIT",
-  "description": "Appears in the bar only while the Omarchy Windows VM is running, with connect/stop controls and what the VM is costing the host",
-  "kinds": ["bar-widget"],
-  "entryPoints": { "barWidget": "Panel.qml" },
+  "description": "Your Windows VM, one click away: an icon that appears only while it runs, with what it costs and the way back in.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
   "barWidget": {
     "displayName": "Windows VM",
-    "description": "Hidden until the Windows VM container is running. The panel shows the guest's CPU, memory, disk and network use against what it was allocated and against the host, and connects, opens the web console or shared folder, or shuts the VM down.",
+    "description": "Appears only while Omarchy's Windows VM runs: its CPU, memory, disk and network next to your machine's, plus Connect, Console, Shared and Stop.",
     "category": "System",
-    "aliases": ["winvm", "windows", "windows-vm", "vm"],
+    "aliases": [
+      "winvm",
+      "windows",
+      "windows-vm",
+      "vm"
+    ],
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
