@@ -4,6 +4,11 @@ Your Windows VM, one click away. It's an icon in the bar that's red while
 Omarchy's Windows VM (`omarchy-windows-vm`) is off, with a Start button in its
 panel, and green while it runs.
 
+This is a fork of [jonspinks/omarchy-winvm](https://github.com/jonspinks/omarchy-winvm)
+that adds Start, the red/green icon, prompt-free Start and Stop when you have
+Docker access, and a choice of how the Connect window opens. It keeps the
+upstream plugin id, `blacksheep.winvm`, so install it in place of the original.
+
 ![Windows VM: an icon that appears only while the VM runs, and what it's costing your machine](preview.png)
 
 ## What you get
@@ -41,7 +46,8 @@ Omarchy's own prompt, as they always did.
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/jonspinks/omarchy-winvm --enable
+omarchy plugin remove blacksheep.winvm --yes   # only if the original is installed
+omarchy plugin add https://github.com/bmaltais/omarchy-winvm --enable
 ```
 
 `--enable` places it in the bar; `omarchy plugin enable blacksheep.winvm --before omarchy.agents`

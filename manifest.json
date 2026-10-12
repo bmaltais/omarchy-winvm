@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "blacksheep.winvm",
   "name": "Windows VM",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Jon",
   "license": "MIT",
   "description": "Your Windows VM, one click away: an icon that appears only while it runs, with what it costs and the way back in.",
