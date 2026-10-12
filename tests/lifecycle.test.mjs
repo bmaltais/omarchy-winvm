@@ -179,12 +179,12 @@ test("starting and stopping states carry their absolute deadline", () => {
 
 // What each phase allows. Rows: phase, then the expected view.
 const views = {
-  absent: { visible: false, up: false, busy: false, canStart: false, canStop: false, canConnect: false },
-  off: { visible: true, up: false, busy: false, canStart: true, canStop: false, canConnect: false },
-  starting: { visible: true, up: false, busy: true, canStart: false, canStop: false, canConnect: false },
-  running: { visible: true, up: true, busy: false, canStart: false, canStop: true, canConnect: true },
-  confirming: { visible: true, up: true, busy: false, canStart: false, canStop: true, canConnect: true },
-  stopping: { visible: true, up: true, busy: true, canStart: false, canStop: false, canConnect: false }
+  absent: { visible: false, up: false, busy: false, canStart: false, canTune: false, canStop: false, canConnect: false },
+  off: { visible: true, up: false, busy: false, canStart: true, canTune: true, canStop: false, canConnect: false },
+  starting: { visible: true, up: false, busy: true, canStart: false, canTune: false, canStop: false, canConnect: false },
+  running: { visible: true, up: true, busy: false, canStart: false, canTune: false, canStop: true, canConnect: true },
+  confirming: { visible: true, up: true, busy: false, canStart: false, canTune: false, canStop: true, canConnect: true },
+  stopping: { visible: true, up: true, busy: true, canStart: false, canTune: false, canStop: false, canConnect: false }
 }
 for (const [phase, want] of Object.entries(views)) {
   test(`what ${phase} allows`, () => {

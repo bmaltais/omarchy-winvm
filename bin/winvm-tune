@@ -1,0 +1,195 @@
+#!/bin/bash
+# The Windows VM's shape: how many cores, how much RAM, how big a disk.
+#
+#   winvm-tune limits
+#       One JSON line with what the panel needs to draw its controls:
+#         hostCores, hostRamGb   what this machine has
+#         freeGb                 room left where the disk image lives
+#         cores, ramGb, diskGb   what the VM has now (0 when unknown)
+#
+#   winvm-tune apply <cores> <ramGb> <diskGb>
+#       Write that shape for the next start. Exit 2 with one line on stderr
+#       for a shape that is refused before anything is asked of you; exit 1
+#       when the write itself failed or the prompt was declined.
+#
+# The shape lives in Omarchy's compose file, which is root-owned, so this does
+# not edit it. It hands the new numbers to `omarchy-windows-vm __priv
+# write_compose`, the same writer the installer ends on, through pkexec. That
+# asks for authorization every time, re-checks every field as root, and
+# regenerates the whole file: the image, ports and mounts are its own, and a
+# key added to the compose by hand is dropped. Nothing is downloaded, the disk
+# image is kept, and the login is read from the credentials file and passed
+# back unchanged. The password goes in on stdin, never on a command line.
+#
+# Docker reads the compose only when it creates the container, so a container
+# left behind by winvm-stop would start with the old shape. After a successful
+# write this removes it (the disk is a bind mount, not part of the container),
+# and winvm-start falls back to the launcher, which creates a new one.
+#
+# For tests/tune.test.sh, so that no real VM, compose or prompt is involved:
+#   WINVM_COMPOSE, WINVM_CREDENTIALS, WINVM_IMAGE   the three files read
+#   WINVM_HOST_CORES, WINVM_HOST_RAM_GB, WINVM_FREE_GB   skip the measurement
+#   WINVM_RUNNING=0|1   skip the sampler
+#   WINVM_TUNE_DRY_RUN=1   print what would be piped to the writer, with the
+#                          password masked, instead of running it
+
+set -u
+export LC_ALL=C
+
+COMPOSE=${WINVM_COMPOSE:-/var/lib/omarchy/windows/docker-compose.yml}
+CREDENTIALS=${WINVM_CREDENTIALS:-$HOME/.config/windows/credentials}
+IMAGE=${WINVM_IMAGE:-$HOME/.windows/data.img}
+CONTAINER=omarchy-windows
+
+# Windows 11 will not install on less, and the installer leaves this much room
+# beside the disk for the Windows image.
+MIN_CORES=2
+MIN_RAM_GB=4
+RESERVE_GB=10
+
+GIB=1073741824
+
+die() {
+  echo "$*" >&2
+  exit 2
+}
+
+number() { [[ $1 =~ ^[0-9]{1,6}$ ]] && printf '%d' "$((10#$1))" || printf 0; }
+
+host_cores() { number "${WINVM_HOST_CORES-$(nproc 2>/dev/null)}"; }
+
+host_ram_gb() {
+  number "${WINVM_HOST_RAM_GB-$(awk '/^MemTotal:/{printf "%d", $2 / 1048576}' /proc/meminfo 2>/dev/null)}"
+}
+
+# The same reading the installer takes, so its "disk + 10 GB" rule is applied
+# to the number it would see.
+free_gb() {
+  local dir=${IMAGE%/*}
+  [[ -d $dir ]] || dir=$HOME
+  number "${WINVM_FREE_GB-$(df -P -- "$dir" 2>/dev/null | awk 'NR==2 {print int($4 / 1024 / 1024)}')}"
+}
+
+# One environment value from the compose. Only the docker group can read it;
+# anyone else gets nothing, and the shape reads as unknown.
+compose_value() {
+  [[ -r $COMPOSE ]] || return 0
+  sed -n "s/^[[:space:]]*$1: \"\([0-9]*\)G\{0,1\}\"[[:space:]]*\$/\1/p" "$COMPOSE" | head -n1
+}
+
+# The disk is also the apparent size of the sparse image, which anyone can
+# read and which is what dockur refuses to shrink.
+image_gb() {
+  local bytes
+  bytes=$(stat -Lc '%s' -- "$IMAGE" 2>/dev/null) || bytes=0
+  [[ $bytes =~ ^[0-9]+$ ]] || bytes=0
+  printf '%d' "$((bytes / GIB))"
+}
+
+disk_gb() {
+  local image compose
+  image=$(image_gb)
+  compose=$(number "$(compose_value DISK_SIZE)")
+  printf '%d' "$((image > compose ? image : compose))"
+}
+
+credential() {
+  local want=$1 key value
+  [[ -f $CREDENTIALS ]] || return 1
+  # Split on the first = only: a password may contain one.
+  while IFS='=' read -r key value; do
+    [[ $key == "$want" ]] && { printf '%s' "$value"; return 0; }
+  done <"$CREDENTIALS"
+  return 1
+}
+
+running() {
+  if [[ -n ${WINVM_RUNNING-} ]]; then
+    [[ $WINVM_RUNNING == 1 ]]
+    return
+  fi
+  "${BASH_SOURCE[0]%/*}/winvm-sample" 2>/dev/null | grep -q '"running":true'
+}
+
+limits() {
+  printf '{"hostCores":%d,"hostRamGb":%d,"freeGb":%d,"cores":%d,"ramGb":%d,"diskGb":%d}\n' \
+    "$(host_cores)" "$(host_ram_gb)" "$(free_gb)" \
+    "$(number "$(compose_value CPU_CORES)")" "$(number "$(compose_value RAM_SIZE)")" "$(disk_gb)"
+}
+
+apply() {
+  (($# == 3)) || die "usage: winvm-tune apply <cores> <ramGb> <diskGb>"
+  local cores=$1 ram=$2 disk=$3
+
+  # The writer's own limits (two digits of cores, three of RAM, four of disk).
+  [[ $cores =~ ^[0-9]{1,2}$ ]] || die "not a number of cores: $cores"
+  [[ $ram =~ ^[0-9]{1,3}$ ]] || die "not a RAM size in GB: $ram"
+  [[ $disk =~ ^[0-9]{1,4}$ ]] || die "not a disk size in GB: $disk"
+  cores=$((10#$cores)) ram=$((10#$ram)) disk=$((10#$disk))
+
+  running && die "stop the VM first: a new shape only takes effect at the next start"
+
+  local max_cores max_ram now free
+  max_cores=$(host_cores)
+  max_ram=$(host_ram_gb)
+  ((cores >= MIN_CORES)) || die "Windows 11 needs at least $MIN_CORES cores"
+  ((ram >= MIN_RAM_GB)) || die "Windows 11 needs at least $MIN_RAM_GB GB of RAM"
+  ((max_cores == 0 || cores <= max_cores)) || die "$cores cores is more than the $max_cores this machine has"
+  ((max_ram == 0 || ram <= max_ram)) || die "$ram GB is more RAM than this machine has ($max_ram GB)"
+
+  # A size below the image would not fail here but at the next start.
+  now=$(disk_gb)
+  ((disk >= now)) || die "the disk cannot shrink: it is already $now GB"
+  ((disk > 0)) || die "not a disk size in GB: $disk"
+  # Only a disk that grows needs room; cores and RAM allocate nothing.
+  if ((disk > now)); then
+    free=$(free_gb)
+    ((free >= disk + RESERVE_GB)) ||
+      die "not enough room: $disk GB needs $((disk + RESERVE_GB)) GB free, $free GB left"
+  fi
+
+  local username password tz
+  username=$(credential USERNAME) && [[ -n $username ]] ||
+    die "no login in $CREDENTIALS: run omarchy-windows-vm install first"
+  password=$(credential PASSWORD) && [[ -n $password ]] ||
+    die "no password in $CREDENTIALS: run omarchy-windows-vm install first"
+  tz=$(timedatectl show -p Timezone --value 2>/dev/null)
+  [[ $tz =~ ^[A-Za-z0-9_/.+-]{1,64}$ ]] || tz=UTC
+
+  if [[ ${WINVM_TUNE_DRY_RUN-} == 1 ]]; then
+    printf 'RAM=%sG\nCORES=%s\nDISK=%sG\nUSERNAME=%s\nPASSWORD=***\nTZ=%s\n' \
+      "$ram" "$cores" "$disk" "$username" "$tz"
+    return 0
+  fi
+
+  # pkexec runs this as root, so only hand it a file root owns.
+  local writer message
+  writer=$(readlink -f -- "$(command -v omarchy-windows-vm)" 2>/dev/null)
+  [[ -n $writer && $(stat -c '%u' -- "$writer" 2>/dev/null) == 0 ]] ||
+    die "omarchy-windows-vm is missing or not root-owned"
+
+  # The container leaves the setgid bit on ~/Windows, and the writer's mount
+  # check then fails without a word (omacom/omarchy#13244), as it does for
+  # winvm-start. Clear the bit first.
+  chmod g-s "$HOME/Windows" 2>/dev/null
+
+  if ! message=$(printf 'RAM=%sG\nCORES=%s\nDISK=%sG\nUSERNAME=%s\nPASSWORD=%s\nTZ=%s\n' \
+    "$ram" "$cores" "$disk" "$username" "$password" "$tz" |
+    pkexec "$writer" __priv write_compose 2>&1 >/dev/null); then
+    # pkexec's "Request dismissed" or the writer's own "invalid ..." line.
+    printf '%s\n' "${message:-Omarchy refused to write the compose and did not say why}" | tail -n1 >&2
+    exit 1
+  fi
+
+  docker rm "$CONTAINER" >/dev/null 2>&1
+  return 0
+}
+
+case ${1-} in
+  limits) limits ;;
+  apply)
+    shift
+    apply "$@"
+    ;;
+  *) die "usage: winvm-tune limits | winvm-tune apply <cores> <ramGb> <diskGb>" ;;
+esac

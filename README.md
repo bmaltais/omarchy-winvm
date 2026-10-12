@@ -6,7 +6,8 @@ panel, and green while it runs.
 
 This is a fork of [jonspinks/omarchy-winvm](https://github.com/jonspinks/omarchy-winvm)
 that adds Start, the red/green icon, prompt-free Start and Stop when you have
-Docker access, and a choice of how the Connect window opens. It keeps the
+Docker access, a choice of how the Connect window opens, and Tune VM to change
+the VM's cores, RAM and disk. It keeps the
 upstream plugin id, `blacksheep.winvm`, so install it in place of the original.
 
 ![Windows VM: an icon that shows whether the VM is running, and what it's costing your machine](preview.png)
@@ -33,7 +34,10 @@ Troubleshooting) and starts the container.
 
 ![The bar icon when the VM is off (red), starting (amber) and running (green)](screenshots/1-states.png)
 
-![The panel while the VM is off: one Start button](screenshots/4-off.png)
+![The panel while the VM is off: Start and Tune VM](screenshots/4-off.png)
+
+**Resize it without reinstalling.** Under Start, **Tune VM** changes the
+cores, RAM and disk the next start gives Windows. See [Tune VM](#tune-vm).
 
 **What it's costing you.** Click it for the VM's CPU, memory, disk and network,
 measured two ways: against what you gave the guest, and against your whole
@@ -93,6 +97,34 @@ Maximized and fullscreen are Hyprland's own states, applied by
 `~/.config/windows/winvm-window-mode`; `bin/winvm-mode get` and
 `bin/winvm-mode set <mode>` read and write it.
 
+## Tune VM
+
+While the VM is off, **Tune VM** in the panel changes what the next start gives
+Windows: cores, RAM and disk size. Pick a shape and press **Apply**.
+
+![Tune VM: cores, RAM and disk for the next start](screenshots/6-tune.png)
+
+- **Cores** go from 2 (the least Windows 11 takes) up to your machine's threads.
+- **RAM** offers the sizes your machine has the memory for.
+- **Disk** can only grow, and only into free space (the size plus 10 GB, the
+  installer's own rule). Windows sees the new space as unallocated: extend
+  `C:` in Disk Management once it's up. A smaller disk means reinstalling
+  the VM.
+
+Apply always asks for your password. The shape lives in Omarchy's root-owned
+compose file, and `bin/winvm-tune` doesn't edit it: it hands the numbers to
+`omarchy-windows-vm __priv write_compose`, the writer the installer itself
+uses, which checks them again as root. Nothing is downloaded, the disk image
+is kept, and your Windows login is passed back unchanged (on stdin, never on a
+command line). That writer regenerates the whole file, so a key you added to
+the compose by hand is dropped.
+
+Docker only reads the compose when it creates the container, so Apply also
+removes the stopped container. The next **Start** therefore goes through
+Omarchy's launcher, which creates a new one and opens a Windows session.
+
+The idea comes from [diogochaves/omarchy-omawin](https://github.com/diogochaves/omarchy-omawin).
+
 ## Interactions
 
 | Gesture | What happens |
@@ -104,6 +136,7 @@ Maximized and fullscreen are Hyprland's own states, applied by
 | `w` | web console at `http://127.0.0.1:8006` (useful while Windows is still booting and RDP isn't up) |
 | `f` | open `~/Windows`, the folder the guest sees as a network share |
 | `s` | start the VM when it's off; shut it down when it's running (press twice) |
+| `t` | open Tune VM, while the VM is off |
 | `r` | resample now |
 
 **Connect** doesn't go through `omarchy-windows-vm launch`, because on a VM
@@ -148,6 +181,11 @@ stops or connects to a real VM.
 - `tests/lifecycle.test.mjs` covers `Lifecycle.js`, which decides what phase the
   VM is in (off, starting, running, confirming a stop, stopping) and what the
   panel offers in each.
+- `tests/tune.test.mjs` covers `Tune.js`, which decides which cores, RAM and
+  disk sizes the panel offers and whether a shape can be applied.
+- `tests/tune.test.sh` runs `bin/winvm-tune` against a compose, credentials
+  and disk image in a temp directory, as a dry run: nothing is written and
+  nothing prompts.
 - `tests/rdp.test.sh` exercises `bin/winvm-rdp` against fake processes under
   made-up names, so a real session is never touched.
 

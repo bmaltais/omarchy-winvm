@@ -7,4 +7,5 @@ cd "${BASH_SOURCE[0]%/*}/.." || exit 1
 status=0
 node --test tests/*.test.mjs || status=1
 tests/rdp.test.sh || status=1
+tests/tune.test.sh || status=1
 exit $status
