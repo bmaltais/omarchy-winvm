@@ -290,7 +290,7 @@ Panel {
             Text {
               text: "󰖳"
               textFormat: Text.PlainText
-              color: root.stopping ? root.hot : root.fg
+              color: (root.stopping || root.starting) ? root.statusColor : root.fg
               font.family: root.ff
               font.pixelSize: Style.font.display
             }

@@ -31,7 +31,9 @@ When it's off, click the icon (or right-click it) to open the panel and press
 **Start**. `bin/winvm-start` clears the setgid bit on `~/Windows` (see
 Troubleshooting) and starts the container.
 
-![The bar with the VM running; the original screenshot, taken before the icon stayed when off](screenshots/1-appears.png)
+![The bar icon when the VM is off (red), starting (amber) and running (green)](screenshots/1-states.png)
+
+![The panel while the VM is off: one Start button](screenshots/4-off.png)
 
 **What it's costing you.** Click it for the VM's CPU, memory, disk and network,
 measured two ways: against what you gave the guest, and against your whole
@@ -45,7 +47,9 @@ the front if it's already open. **Console** opens the VM's web console, and
 **Shared** opens the folder you share with it. **Stop** shuts Windows down
 cleanly. The keyboard works too: `c`, `w`, `f`, `s`.
 
-![The VM idle and not connected, one click from Connect](screenshots/3-idle.png)
+![The VM running and not connected, one click from Connect](screenshots/3-idle.png)
+
+![The cog in the header: how Connect opens the window](screenshots/5-settings.png)
 
 **Never nags.** Watching the VM never asks for a password, because every number
 comes from files you can already read. Start and Stop don't ask either if your user
