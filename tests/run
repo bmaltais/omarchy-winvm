@@ -1,0 +1,10 @@
+#!/bin/bash
+# Run every test. Nothing here starts, stops or connects to a real VM.
+
+set -u
+cd "${BASH_SOURCE[0]%/*}/.." || exit 1
+
+status=0
+node --test tests/*.test.mjs || status=1
+tests/rdp.test.sh || status=1
+exit $status

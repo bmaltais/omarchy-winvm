@@ -15,44 +15,14 @@
 
 set -u
 
-starttime() {
-  local stat
-  { stat=$(<"/proc/$1/stat"); } 2>/dev/null || return 1
-  read -ra stat <<<"${stat##*) }"
-  echo "${stat[19]}"
-}
+rdp=${BASH_SOURCE[0]%/*}/winvm-rdp
 
-# Signal only the processes winvm-rdp-pids found. A session that exited since
-# then may have left its pid to something else, so check that the start time
-# still matches right before each kill; a pid is only reused by a process that
-# started later.
-close_rdp() {
-  local entry pid start
-  for entry in "${rdp[@]}"; do
-    read -r pid start <<<"$entry"
-    [[ -n $start && $(starttime "$pid") == "$start" ]] || continue
-    kill "$pid" 2>/dev/null
-  done
-}
-
-waiting_launcher=""
-for pid in $(pgrep -u "$UID" -f omarchy-windows-vm); do
-  mapfile -t argv < <(tr '\0' '\n' <"/proc/$pid/cmdline" 2>/dev/null)
-  # bash <script> <action> [flag]
-  [[ ${argv[1]:-} == */omarchy-windows-vm ]] || continue
-  [[ ${argv[2]:-} == launch || ${argv[2]:-} == start ]] || continue
-  [[ ${argv[3]:-} == --keep-alive || ${argv[3]:-} == -k ]] && continue
-  waiting_launcher=$pid
-done
-
-mapfile -t rdp < <("${BASH_SOURCE[0]%/*}/winvm-rdp-pids")
-
-if [[ -n $waiting_launcher ]] && ((${#rdp[@]})); then
-  close_rdp
+if "$rdp" launcher-waiting && "$rdp" open; then
+  "$rdp" close
   exit 0
 fi
 
-((${#rdp[@]})) && close_rdp
+"$rdp" close
 
 # With Docker access, stop the container and leave it in place: no prompt, and
 # winvm-start can bring it straight back. `omarchy-windows-vm stop` removes the

@@ -133,9 +133,23 @@ waiting on its RDP window, `bin/winvm-stop` closes that window and lets the
 launcher stop the VM, as it would anyway. Stopping the container directly
 would make the launcher ask for a password a second time. Docker's SIGTERM
 becomes an ACPI shutdown in the guest, so Windows gets to shut down cleanly.
-It only closes RDP windows it can still match to the session it found: each
-one is identified by pid and start time, checked again just before the kill,
-so a pid that was reused by another process is left alone.
+Everything about RDP sessions lives in `bin/winvm-rdp`: whether one is open,
+closing them, and whether a launcher is still waiting. It only closes windows it
+can still match to the session it found: each one is identified by pid and start
+time, checked again just before the kill, so a pid that was reused by another
+process is left alone. `winvm-connect` starts `xfreerdp3` through
+`winvm-rdp run`, which marks the process so it can be found again.
+
+## Tests
+
+`tests/run` runs everything; it needs only `node` and `bash`, and never starts,
+stops or connects to a real VM.
+
+- `tests/lifecycle.test.mjs` covers `Lifecycle.js`, which decides what phase the
+  VM is in (off, starting, running, confirming a stop, stopping) and what the
+  panel offers in each.
+- `tests/rdp.test.sh` exercises `bin/winvm-rdp` against fake processes under
+  made-up names, so a real session is never touched.
 
 ## The numbers
 
