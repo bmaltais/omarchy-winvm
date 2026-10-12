@@ -6,6 +6,7 @@ import qs.Ui
 import qs.Commons
 import "Model.js" as Model
 import "Lifecycle.js" as Lifecycle
+import "Tune.js" as Tune
 
 // The Omarchy Windows VM in the bar.
 //
@@ -42,6 +43,17 @@ Panel {
   // script can read it without going through the shell.
   property string windowMode: "maximized"
   property bool showSettings: false
+
+  // The VM's cores, RAM and disk, changed while it is off. `tuneLimits` is
+  // what bin/winvm-tune reports (null until it has), `tuneShape` what the
+  // controls are set to, and `tuneMessage` what the last Apply came back with.
+  property bool showTune: false
+  property var tuneLimits: null
+  property var tuneShape: ({ cores: 0, ramGb: 0, diskGb: 0 })
+  property string tuneMessage: ""
+  property bool tuneFailed: false
+  readonly property var tuneVerdict:
+    tuneLimits ? Tune.verdict(tuneLimits, tuneShape) : { ok: false, warn: false, text: "" }
 
   visible: ui.visible
   implicitWidth: ui.visible ? button.implicitWidth : 0
@@ -89,6 +101,29 @@ Panel {
     Quickshell.execDetached([binDir + "/winvm-mode", "set", mode])
   }
 
+  function toggleTune() {
+    if (!ui.canTune || tuneProc.running) return
+    showTune = !showTune
+    if (!showTune) return
+    tuneMessage = ""
+    tuneLimits = null
+    limitsProc.running = true
+  }
+
+  function setTune(key, value) {
+    var next = { cores: tuneShape.cores, ramGb: tuneShape.ramGb, diskGb: tuneShape.diskGb }
+    next[key] = value
+    tuneShape = next
+  }
+
+  // bin/winvm-tune asks for authorization, every time: it rewrites the
+  // root-owned compose through Omarchy's own writer.
+  function applyTune() {
+    if (!tuneVerdict.ok || tuneProc.running) return
+    tuneMessage = ""
+    tuneProc.running = true
+  }
+
   function connect() {
     run("winvm-connect")
     close()
@@ -118,6 +153,43 @@ Panel {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.windowMode = String(text).trim() || "maximized"
+    }
+  }
+
+  Process {
+    id: limitsProc
+    command: [root.binDir + "/winvm-tune", "limits"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          root.tuneLimits = JSON.parse(String(text).trim())
+        } catch (e) {
+          return
+        }
+        root.tuneShape = Tune.seed(root.tuneLimits)
+      }
+    }
+  }
+
+  Process {
+    id: tuneProc
+    command: [root.binDir + "/winvm-tune", "apply",
+      String(root.tuneShape.cores), String(root.tuneShape.ramGb), String(root.tuneShape.diskGb)]
+    stderr: StdioCollector { id: tuneErr; waitForEnd: true }
+    onExited: function(code) {
+      var lines = String(tuneErr.text).trim().split("\n")
+      var said = lines[lines.length - 1]
+      root.tuneFailed = code !== 0
+      if (code === 0) {
+        root.tuneMessage = "Saved. " + root.tuneVerdict.text
+        root.showTune = false
+      } else if (/dismissed/i.test(said)) {
+        // The password prompt was closed: nothing was written.
+        root.tuneMessage = ""
+      } else {
+        root.tuneMessage = said || "The VM's configuration could not be written."
+      }
     }
   }
 
@@ -156,8 +228,13 @@ Panel {
       if (!modeProc.running) modeProc.running = true
     } else {
       showSettings = false
+      showTune = false
+      tuneMessage = ""
     }
   }
+
+  // Tune is for a VM that is off; a start closes it.
+  onUiChanged: if (!ui.canTune) showTune = false
 
   readonly property color fg: bar ? bar.foreground : Color.foreground
   readonly property string ff: bar ? bar.fontFamily : Style.font.family
@@ -226,6 +303,7 @@ Panel {
         var k = String(t).toLowerCase()
         if (!root.ui.up) {
           if (k === "s") root.startVm()
+          else if (k === "t") root.toggleTune()
           else if (k === "r") root.refresh()
         }
         else if (k === "c") root.connect()
@@ -327,6 +405,148 @@ Panel {
           fontFamily: root.ff
           fontSize: Style.font.bodySmall
           onClicked: root.startVm()
+        }
+
+        Button {
+          visible: root.ui.canTune
+          width: parent.width
+          bordered: true
+          text: "Tune VM"
+          iconText: "󰒓"
+          tooltipText: "Cores, RAM and disk for the next start (t)"
+          selected: root.showTune
+          foreground: root.fg
+          fontFamily: root.ff
+          fontSize: Style.font.bodySmall
+          onClicked: root.toggleTune()
+        }
+
+        Column {
+          visible: root.showTune && root.tuneLimits !== null
+          width: parent.width
+          spacing: Style.space(6)
+
+          InfoLabel { text: "Cores" }
+
+          RowLayout {
+            width: parent.width
+            spacing: Style.space(6)
+
+            Button {
+              bordered: true
+              text: "−"
+              enabled: !tuneProc.running && Tune.canDropCore(root.tuneShape)
+              foreground: root.fg
+              fontFamily: root.ff
+              fontSize: Style.font.bodySmall
+              onClicked: root.setTune("cores", root.tuneShape.cores - 1)
+            }
+
+            InfoValue {
+              Layout.fillWidth: true
+              horizontalAlignment: Text.AlignHCenter
+              text: root.tuneShape.cores + " of " + (root.tuneLimits ? root.tuneLimits.hostCores : 0) + " threads"
+            }
+
+            Button {
+              bordered: true
+              text: "+"
+              enabled: !tuneProc.running && root.tuneLimits !== null
+                && Tune.canAddCore(root.tuneLimits, root.tuneShape)
+              foreground: root.fg
+              fontFamily: root.ff
+              fontSize: Style.font.bodySmall
+              onClicked: root.setTune("cores", root.tuneShape.cores + 1)
+            }
+          }
+
+          InfoLabel { text: "RAM" }
+
+          GridLayout {
+            width: parent.width
+            columns: 4
+            columnSpacing: Style.space(6)
+            rowSpacing: Style.space(6)
+
+            Repeater {
+              model: root.tuneLimits ? Tune.ramChoices(root.tuneLimits) : []
+
+              Button {
+                Layout.fillWidth: true
+                bordered: true
+                text: modelData + " GB"
+                selected: root.tuneShape.ramGb === modelData
+                enabled: !tuneProc.running
+                foreground: root.fg
+                fontFamily: root.ff
+                fontSize: Style.font.bodySmall
+                onClicked: root.setTune("ramGb", modelData)
+              }
+            }
+          }
+
+          // The disk only grows: dockur will not shrink the image, so smaller
+          // sizes are not offered, nor ones this drive has no room for.
+          InfoLabel { text: "Disk, which can only grow" }
+
+          GridLayout {
+            width: parent.width
+            columns: 4
+            columnSpacing: Style.space(6)
+            rowSpacing: Style.space(6)
+
+            Repeater {
+              model: root.tuneLimits ? Tune.diskChoices(root.tuneLimits) : []
+
+              Button {
+                Layout.fillWidth: true
+                bordered: true
+                text: modelData + " GB"
+                selected: root.tuneShape.diskGb === modelData
+                enabled: !tuneProc.running
+                foreground: root.fg
+                fontFamily: root.ff
+                fontSize: Style.font.bodySmall
+                onClicked: root.setTune("diskGb", modelData)
+              }
+            }
+          }
+
+          Text {
+            width: parent.width
+            text: root.tuneVerdict.text
+            textFormat: Text.PlainText
+            wrapMode: Text.WordWrap
+            color: root.tuneVerdict.warn ? "#e0b050" : root.fg
+            opacity: root.tuneVerdict.warn ? 1.0 : 0.6
+            font.family: root.ff
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Button {
+            width: parent.width
+            bordered: true
+            text: tuneProc.running ? "Applying" : "Apply"
+            iconText: "󰄬"
+            iconSpinning: tuneProc.running
+            tooltipText: "Save this shape for the next start; asks for your password"
+            enabled: root.tuneVerdict.ok && !tuneProc.running
+            foreground: root.fg
+            fontFamily: root.ff
+            fontSize: Style.font.bodySmall
+            onClicked: root.applyTune()
+          }
+        }
+
+        Text {
+          visible: !root.ui.up && root.tuneMessage !== ""
+          width: parent.width
+          text: root.tuneMessage
+          textFormat: Text.PlainText
+          wrapMode: Text.WordWrap
+          color: root.tuneFailed ? root.hot : root.fg
+          font.family: root.ff
+          font.pixelSize: Style.font.bodySmall
         }
 
         // Each meter is measured against what the guest was given, which is
@@ -473,7 +693,7 @@ Panel {
         Text {
           visible: !root.ui.up
           width: parent.width
-          text: "s start · r refresh"
+          text: "s start · t tune · r refresh"
           textFormat: Text.PlainText
           opacity: 0.45
           color: root.fg

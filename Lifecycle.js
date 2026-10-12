@@ -68,11 +68,13 @@ function tick(state, now) {
 // What each phase means for the panel. `status` and `tooltipWord` are null
 // where the panel has to say it itself (running or confirming: connected or
 // not, uptime). `tone` is "off", "busy" (amber) or "up"; the panel owns the
-// actual colours. A field left out is false, and the labels default to the
+// actual colours. `canTune` is off only: the VM's shape is read when it starts,
+// so there is nothing to change while it is on its way up or down. A field
+// left out is false, and the labels default to the
 // idle ones.
 var VIEWS = {
   absent: { tone: "off", status: "Off", tooltipWord: "off" },
-  off: { visible: true, tone: "off", canStart: true, status: "Off", tooltipWord: "off" },
+  off: { visible: true, tone: "off", canStart: true, canTune: true, status: "Off", tooltipWord: "off" },
   starting: { visible: true, tone: "busy", startLabel: "Starting", status: "Starting…", tooltipWord: "starting" },
   running: { visible: true, up: true, tone: "up", canStop: true, canConnect: true },
   confirming: { visible: true, up: true, tone: "up", canStop: true, canConnect: true, stopLabel: "Confirm", stopWarns: true },
@@ -87,6 +89,7 @@ function view(state) {
     busy: v.tone === "busy",
     tone: v.tone,
     canStart: !!v.canStart,
+    canTune: !!v.canTune,
     canStop: !!v.canStop,
     canConnect: !!v.canConnect,
     startLabel: v.startLabel || "Start",
