@@ -5,6 +5,7 @@ import Quickshell.Io
 import qs.Ui
 import qs.Commons
 import "Model.js" as Model
+import "Lifecycle.js" as Lifecycle
 
 // The Omarchy Windows VM in the bar.
 //
@@ -31,36 +32,20 @@ Panel {
   property var prevSample: null
   property var d: Model.derive(null, null)
 
-  // Stopping takes a while: Windows gets an ACPI shutdown and up to a couple
-  // of minutes to act on it. Hold a visible "stopping" state until the
-  // container is actually gone, so a second click doesn't look necessary.
-  property bool stopping: false
-  property bool confirmStop: false
-
-  // Starting is the mirror image: the launcher asks for authorization, boots
-  // the container, then opens RDP. Hold a "starting" state until it is up.
-  property bool starting: false
+  // The VM's phase (off, starting, running, confirming a stop, stopping) and
+  // when a timed phase gives up. Lifecycle.js owns every transition; `phase`
+  // is what the rest of this file reads, and never names a phase itself.
+  property var life: Lifecycle.initial()
+  readonly property var phase: Lifecycle.view(life)
 
   // How Connect opens the window; saved by bin/winvm-mode so the connect
   // script can read it without going through the shell.
   property string windowMode: "maximized"
   property bool showSettings: false
 
-  readonly property bool running: d.running
-  readonly property bool installed: d.installed
-
-  visible: installed
-  implicitWidth: installed ? button.implicitWidth : 0
-  implicitHeight: installed ? (bar ? bar.barSize : 26) : 0
-
-  onRunningChanged: {
-    if (running) {
-      starting = false
-    } else {
-      stopping = false
-      confirmStop = false
-    }
-  }
+  visible: phase.visible
+  implicitWidth: phase.visible ? button.implicitWidth : 0
+  implicitHeight: phase.visible ? (bar ? bar.barSize : 26) : 0
 
   function refresh() {
     if (sampleProc.running) return
@@ -79,19 +64,22 @@ Panel {
     prevSample = sample
     sample = next
     d = Model.derive(sample, prevSample)
+    life = Lifecycle.observe(life, d, Date.now())
   }
 
   function run(script) {
     Quickshell.execDetached([binDir + "/" + script])
   }
 
-  // bin/winvm-start wraps `launch --keep-alive`, the launcher's only way to
-  // bring the VM up. It also opens an RDP window, and keep-alive means closing
-  // that window leaves the VM running, as with Connect.
+  // bin/winvm-start first tries a plain `docker start`, which brings the VM
+  // up with no window and no prompt. Only if that fails does it fall back to
+  // `omarchy-windows-vm launch --keep-alive`, which asks for authorization and
+  // opens an RDP window; keep-alive means closing that window leaves the VM
+  // running, as with Connect.
   function startVm() {
-    if (starting || running) return
-    starting = true
-    startTimer.restart()
+    var r = Lifecycle.start(life, Date.now())
+    life = r.state
+    if (r.effect !== "start") return
     run("winvm-start")
     close()
   }
@@ -119,15 +107,9 @@ Panel {
   // Two clicks: shutting Windows down from a bar popup is too easy to do by
   // accident on the way to Connect.
   function requestStop() {
-    if (stopping) return
-    if (!confirmStop) {
-      confirmStop = true
-      confirmTimer.restart()
-      return
-    }
-    confirmStop = false
-    stopping = true
-    run("winvm-stop")
+    var r = Lifecycle.stop(life, Date.now())
+    life = r.state
+    if (r.effect === "stop") run("winvm-stop")
   }
 
   Process {
@@ -156,25 +138,15 @@ Panel {
     onTriggered: root.refresh()
   }
 
+  // Fires when the phase's deadline passes: a start or stop declined at the
+  // password prompt, or a Stop press nobody confirmed. The deadline is an
+  // absolute Date.now() time and a Timer interval is relative, so re-derive it
+  // whenever the lifecycle changes. The extra 50 ms keeps a timer that fires a
+  // hair early from finding the deadline not yet reached and never rearming.
   Timer {
-    id: confirmTimer
-    interval: 4000
-    onTriggered: root.confirmStop = false
-  }
-
-  // If the start was declined at the password prompt the VM stays off.
-  Timer {
-    id: startTimer
-    interval: 180000
-    onTriggered: root.starting = false
-  }
-
-  // If the stop was declined at the password prompt the VM stays up; don't
-  // leave the panel claiming otherwise forever.
-  Timer {
-    running: root.stopping
-    interval: 180000
-    onTriggered: root.stopping = false
+    running: root.life.deadline > 0
+    interval: Math.max(1, root.life.deadline - Date.now()) + 50
+    onTriggered: root.life = Lifecycle.tick(root.life, Date.now())
   }
 
   onOpenedChanged: {
@@ -193,20 +165,19 @@ Panel {
   // Green while the VM runs, red while it is off. Mid-transition (starting or
   // shutting down) is amber, so it never reads as either settled state.
   readonly property color statusColor: {
-    if (stopping || starting) return "#e0b050"
-    return running ? "#5fbf6f" : root.hot
+    if (phase.tone === "busy") return "#e0b050"
+    return phase.tone === "up" ? "#5fbf6f" : root.hot
   }
 
   readonly property string stateText: {
-    if (!running) return starting ? "Starting…" : "Off"
-    if (stopping) return "Shutting down…"
+    if (phase.status) return phase.status
     return (d.rdp ? "Connected" : "Running, not connected") + " · up " + Model.uptimeText(d.uptime)
   }
 
   readonly property string tooltipSummary: {
-    if (!running) return "Windows VM — " + (starting ? "starting" : "off")
+    if (!phase.up) return "Windows VM — " + phase.word
     return [
-      "Windows VM — " + (stopping ? "shutting down" : (d.rdp ? "connected" : "running")),
+      "Windows VM — " + (phase.word || (d.rdp ? "connected" : "running")),
       "CPU " + Model.percent(d.cpu) + " of " + d.vcpus + " vCPUs"
         + "   Mem " + Model.bytes(d.memBytes) + " / " + Model.bytes(d.ramBytes),
       "Disk " + Model.rateText(d.ioRead + d.ioWrite)
@@ -227,7 +198,7 @@ Panel {
     onPressed: function(b) {
       // Right-click is the shortcut for what you want most: the VM's window.
       if (b === Qt.RightButton) {
-        if (root.running) root.connect()
+        if (root.phase.up) root.connect()
         else root.startVm()
         return
       }
@@ -252,7 +223,7 @@ Panel {
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
         var k = String(t).toLowerCase()
-        if (!root.running) {
+        if (!root.phase.up) {
           if (k === "s") root.startVm()
           else if (k === "r") root.refresh()
         }
@@ -290,7 +261,7 @@ Panel {
             Text {
               text: "󰖳"
               textFormat: Text.PlainText
-              color: (root.stopping || root.starting) ? root.statusColor : root.fg
+              color: root.phase.busy ? root.statusColor : root.fg
               font.family: root.ff
               font.pixelSize: Style.font.display
             }
@@ -343,14 +314,14 @@ Panel {
         }
 
         Button {
-          visible: !root.running
+          visible: !root.phase.up
           width: parent.width
           bordered: true
-          text: root.starting ? "Starting" : "Start"
+          text: root.phase.startLabel
           iconText: "󰐊"
-          iconSpinning: root.starting
+          iconSpinning: root.phase.startSpins
           tooltipText: "Start the VM and open a Windows session (s)"
-          enabled: !root.starting
+          enabled: root.phase.canStart
           foreground: root.fg
           fontFamily: root.ff
           fontSize: Style.font.bodySmall
@@ -361,7 +332,7 @@ Panel {
         // what tells you whether Windows itself is starved. The note puts it
         // against the host, which is what tells you what it is costing you.
         Column {
-          visible: root.running
+          visible: root.phase.up
           width: parent.width
           spacing: Style.space(8)
 
@@ -417,10 +388,10 @@ Panel {
           }
         }
 
-        PanelSeparator { visible: root.running; width: parent.width }
+        PanelSeparator { visible: root.phase.up; width: parent.width }
 
         GridLayout {
-          visible: root.running
+          visible: root.phase.up
           width: parent.width
           columns: 2
           columnSpacing: Style.space(14)
@@ -439,10 +410,10 @@ Panel {
           InfoValue { text: root.d.container || "—" }
         }
 
-        PanelSeparator { visible: root.running; width: parent.width }
+        PanelSeparator { visible: root.phase.up; width: parent.width }
 
         RowLayout {
-          visible: root.running
+          visible: root.phase.up
           width: parent.width
           spacing: Style.space(6)
 
@@ -452,7 +423,7 @@ Panel {
             text: root.d.rdp ? "Focus" : "Connect"
             iconText: "󰢹"
             tooltipText: root.d.rdp ? "Bring the RDP window forward (c)" : "Open an RDP session (c)"
-            enabled: !root.stopping
+            enabled: root.phase.canConnect
             foreground: root.fg
             fontFamily: root.ff
             fontSize: Style.font.bodySmall
@@ -486,12 +457,12 @@ Panel {
           Button {
             Layout.fillWidth: true
             bordered: true
-            text: root.stopping ? "Stopping" : (root.confirmStop ? "Confirm" : "Stop")
+            text: root.phase.stopLabel
             iconText: "󰐥"
-            iconSpinning: root.stopping
+            iconSpinning: root.phase.stopSpins
             tooltipText: "Shut Windows down and stop the container (s, twice)"
-            enabled: !root.stopping
-            foreground: root.confirmStop ? root.hot : root.fg
+            enabled: root.phase.canStop
+            foreground: root.phase.stopWarns ? root.hot : root.fg
             fontFamily: root.ff
             fontSize: Style.font.bodySmall
             onClicked: root.requestStop()
@@ -499,7 +470,7 @@ Panel {
         }
 
         Text {
-          visible: !root.running
+          visible: !root.phase.up
           width: parent.width
           text: "s start · r refresh"
           textFormat: Text.PlainText
@@ -510,7 +481,7 @@ Panel {
         }
 
         Text {
-          visible: root.running
+          visible: root.phase.up
           width: parent.width
           text: "c connect · w console · f shared · s stop · r refresh"
           textFormat: Text.PlainText
