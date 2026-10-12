@@ -40,7 +40,7 @@ measured two ways: against what you gave the guest, and against your whole
 machine. You can see whether it's the VM making your laptop hot, or something
 else.
 
-![The VM busy while you're connected: CPU, memory and disk against the guest and the host](screenshots/2-connected.png)
+![Connected: CPU, memory and disk against the guest and the host](screenshots/2-connected.png)
 
 **Straight back in.** **Connect** opens the Windows desktop, or brings it to
 the front if it's already open. **Console** opens the VM's web console, and
