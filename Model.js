@@ -27,6 +27,7 @@ var IO_BUSY = 200 * 1024 * 1024
 function derive(sample, prev) {
   var out = {
     running: !!(sample && sample.running),
+    installed: !!(sample && sample.installed) || !!(sample && sample.running),
     cpuCores: 0,     // host cores' worth of CPU the guest is burning
     cpu: 0,          // share of the guest's own vCPUs
     cpuHost: 0,      // share of the whole host

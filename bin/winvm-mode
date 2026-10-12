@@ -1,0 +1,33 @@
+#!/bin/bash
+# How Connect opens the RDP window: windowed, maximized, or fullscreen.
+#
+#   winvm-mode get          print the saved mode (maximized if none is saved)
+#   winvm-mode set <mode>   save it
+#
+# Kept in a file of its own so the panel (which sets it) and winvm-connect
+# (which acts on it) agree without either parsing shell.json.
+
+set -u
+
+FILE="$HOME/.config/windows/winvm-window-mode"
+DEFAULT=maximized
+
+valid() { [[ $1 == windowed || $1 == maximized || $1 == fullscreen ]]; }
+
+case ${1:-get} in
+  get)
+    mode=""
+    [[ -f $FILE ]] && read -r mode <"$FILE"
+    valid "$mode" || mode=$DEFAULT
+    echo "$mode"
+    ;;
+  set)
+    valid "${2:-}" || { echo "usage: winvm-mode set windowed|maximized|fullscreen" >&2; exit 2; }
+    mkdir -p "${FILE%/*}"
+    echo "$2" >"$FILE"
+    ;;
+  *)
+    echo "usage: winvm-mode get | set <mode>" >&2
+    exit 2
+    ;;
+esac

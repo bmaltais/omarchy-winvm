@@ -6,12 +6,12 @@ import qs.Ui
 import qs.Commons
 import "Model.js" as Model
 
-// The Omarchy Windows VM in the bar, only while it is running.
+// The Omarchy Windows VM in the bar.
 //
-// A widget for a VM that is off most of the day would be a permanent icon that
-// means nothing; this one takes no space until the container exists. Once it
-// does, the panel answers the two questions you have about a VM in the corner
-// of your screen: how do I get back to it, and what is it costing me.
+// While the VM is off the icon stays, dimmed, and its panel offers a single
+// Start button. While it runs, the panel answers the two questions you have
+// about a VM in the corner of your screen: how do I get back to it, and what
+// is it costing me. Nothing shows on a machine without the VM installed.
 //
 // Stats come from bin/winvm-sample, which reads the container's cgroup and the
 // qemu process's /proc entry directly. That needs no privileges, so watching
@@ -37,17 +37,28 @@ Panel {
   property bool stopping: false
   property bool confirmStop: false
 
-  readonly property bool running: d.running
+  // Starting is the mirror image: the launcher asks for authorization, boots
+  // the container, then opens RDP. Hold a "starting" state until it is up.
+  property bool starting: false
 
-  visible: running
-  implicitWidth: running ? button.implicitWidth : 0
-  implicitHeight: running ? (bar ? bar.barSize : 26) : 0
+  // How Connect opens the window; saved by bin/winvm-mode so the connect
+  // script can read it without going through the shell.
+  property string windowMode: "maximized"
+  property bool showSettings: false
+
+  readonly property bool running: d.running
+  readonly property bool installed: d.installed
+
+  visible: installed
+  implicitWidth: installed ? button.implicitWidth : 0
+  implicitHeight: installed ? (bar ? bar.barSize : 26) : 0
 
   onRunningChanged: {
-    if (!running) {
+    if (running) {
+      starting = false
+    } else {
       stopping = false
       confirmStop = false
-      close()
     }
   }
 
@@ -72,6 +83,22 @@ Panel {
 
   function run(script) {
     Quickshell.execDetached([binDir + "/" + script])
+  }
+
+  // bin/winvm-start wraps `launch --keep-alive`, the launcher's only way to
+  // bring the VM up. It also opens an RDP window, and keep-alive means closing
+  // that window leaves the VM running, as with Connect.
+  function startVm() {
+    if (starting || running) return
+    starting = true
+    startTimer.restart()
+    run("winvm-start")
+    close()
+  }
+
+  function setWindowMode(mode) {
+    windowMode = mode
+    Quickshell.execDetached([binDir + "/winvm-mode", "set", mode])
   }
 
   function connect() {
@@ -104,6 +131,15 @@ Panel {
   }
 
   Process {
+    id: modeProc
+    command: [root.binDir + "/winvm-mode", "get"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.windowMode = String(text).trim() || "maximized"
+    }
+  }
+
+  Process {
     id: sampleProc
     command: [root.binDir + "/winvm-sample"]
     stdout: StdioCollector {
@@ -126,6 +162,13 @@ Panel {
     onTriggered: root.confirmStop = false
   }
 
+  // If the start was declined at the password prompt the VM stays off.
+  Timer {
+    id: startTimer
+    interval: 180000
+    onTriggered: root.starting = false
+  }
+
   // If the stop was declined at the password prompt the VM stays up; don't
   // leave the panel claiming otherwise forever.
   Timer {
@@ -134,19 +177,34 @@ Panel {
     onTriggered: root.stopping = false
   }
 
-  onOpenedChanged: if (opened) refresh()
+  onOpenedChanged: {
+    if (opened) {
+      refresh()
+      if (!modeProc.running) modeProc.running = true
+    } else {
+      showSettings = false
+    }
+  }
 
   readonly property color fg: bar ? bar.foreground : Color.foreground
   readonly property string ff: bar ? bar.fontFamily : Style.font.family
   readonly property color hot: bar ? bar.urgent : Color.urgent
 
+  // Green while the VM runs, red while it is off. Mid-transition (starting or
+  // shutting down) is amber, so it never reads as either settled state.
+  readonly property color statusColor: {
+    if (stopping || starting) return "#e0b050"
+    return running ? "#5fbf6f" : root.hot
+  }
+
   readonly property string stateText: {
+    if (!running) return starting ? "Starting…" : "Off"
     if (stopping) return "Shutting down…"
     return (d.rdp ? "Connected" : "Running, not connected") + " · up " + Model.uptimeText(d.uptime)
   }
 
   readonly property string tooltipSummary: {
-    if (!running) return ""
+    if (!running) return "Windows VM — " + (starting ? "starting" : "off")
     return [
       "Windows VM — " + (stopping ? "shutting down" : (d.rdp ? "connected" : "running")),
       "CPU " + Model.percent(d.cpu) + " of " + d.vcpus + " vCPUs"
@@ -162,14 +220,15 @@ Panel {
     bar: root.bar
     text: "󰖳"
     tooltipText: root.tooltipSummary
-    active: root.stopping
+    active: true
     useActiveColor: true
-    activeColor: root.hot
+    activeColor: root.statusColor
 
     onPressed: function(b) {
       // Right-click is the shortcut for what you want most: the VM's window.
       if (b === Qt.RightButton) {
-        root.connect()
+        if (root.running) root.connect()
+        else root.startVm()
         return
       }
       root.toggle()
@@ -193,7 +252,11 @@ Panel {
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
         var k = String(t).toLowerCase()
-        if (k === "c") root.connect()
+        if (!root.running) {
+          if (k === "s") root.startVm()
+          else if (k === "r") root.refresh()
+        }
+        else if (k === "c") root.connect()
         else if (k === "w") root.openConsole()
         else if (k === "f") root.openShared()
         else if (k === "s") root.requestStop()
@@ -213,11 +276,21 @@ Panel {
           title: "Windows VM"
           meta: root.stateText
           iconOpacity: root.d.rdp ? 1.0 : 0.6
+          trailingControl: Component {
+            Button {
+              iconText: "󰒓"
+              tooltipText: "Settings"
+              selected: root.showSettings
+              foreground: root.fg
+              fontFamily: root.ff
+              onClicked: root.showSettings = !root.showSettings
+            }
+          }
           iconComponent: Component {
             Text {
               text: "󰖳"
               textFormat: Text.PlainText
-              color: root.stopping ? root.hot : root.fg
+              color: (root.stopping || root.starting) ? root.statusColor : root.fg
               font.family: root.ff
               font.pixelSize: Style.font.display
             }
@@ -226,10 +299,69 @@ Panel {
 
         PanelSeparator { width: parent.width }
 
+        Column {
+          visible: root.showSettings
+          width: parent.width
+          spacing: Style.space(6)
+
+          Text {
+            text: "Connect opens the window"
+            textFormat: Text.PlainText
+            opacity: 0.6
+            color: root.fg
+            font.family: root.ff
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          RowLayout {
+            width: parent.width
+            spacing: Style.space(6)
+
+            Repeater {
+              model: [
+                { mode: "windowed", label: "Window", icon: "󰖲", tip: "A normal tiled window" },
+                { mode: "maximized", label: "Maximized", icon: "󰁌", tip: "Fills the screen, keeping the bar and gaps" },
+                { mode: "fullscreen", label: "Fullscreen", icon: "󰊓", tip: "Covers the whole screen, bar included" }
+              ]
+
+              Button {
+                Layout.fillWidth: true
+                bordered: true
+                text: modelData.label
+                iconText: modelData.icon
+                tooltipText: modelData.tip
+                selected: root.windowMode === modelData.mode
+                foreground: root.fg
+                fontFamily: root.ff
+                fontSize: Style.font.bodySmall
+                onClicked: root.setWindowMode(modelData.mode)
+              }
+            }
+          }
+
+          PanelSeparator { width: parent.width }
+        }
+
+        Button {
+          visible: !root.running
+          width: parent.width
+          bordered: true
+          text: root.starting ? "Starting" : "Start"
+          iconText: "󰐊"
+          iconSpinning: root.starting
+          tooltipText: "Start the VM and open a Windows session (s)"
+          enabled: !root.starting
+          foreground: root.fg
+          fontFamily: root.ff
+          fontSize: Style.font.bodySmall
+          onClicked: root.startVm()
+        }
+
         // Each meter is measured against what the guest was given, which is
         // what tells you whether Windows itself is starved. The note puts it
         // against the host, which is what tells you what it is costing you.
         Column {
+          visible: root.running
           width: parent.width
           spacing: Style.space(8)
 
@@ -285,9 +417,10 @@ Panel {
           }
         }
 
-        PanelSeparator { width: parent.width }
+        PanelSeparator { visible: root.running; width: parent.width }
 
         GridLayout {
+          visible: root.running
           width: parent.width
           columns: 2
           columnSpacing: Style.space(14)
@@ -306,9 +439,10 @@ Panel {
           InfoValue { text: root.d.container || "—" }
         }
 
-        PanelSeparator { width: parent.width }
+        PanelSeparator { visible: root.running; width: parent.width }
 
         RowLayout {
+          visible: root.running
           width: parent.width
           spacing: Style.space(6)
 
@@ -365,6 +499,18 @@ Panel {
         }
 
         Text {
+          visible: !root.running
+          width: parent.width
+          text: "s start · r refresh"
+          textFormat: Text.PlainText
+          opacity: 0.45
+          color: root.fg
+          font.family: root.ff
+          font.pixelSize: Style.font.caption
+        }
+
+        Text {
+          visible: root.running
           width: parent.width
           text: "c connect · w console · f shared · s stop · r refresh"
           textFormat: Text.PlainText
