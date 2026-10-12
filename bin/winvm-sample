@@ -28,7 +28,11 @@ for s in /sys/fs/cgroup/system.slice/docker-*.scope; do
 done
 
 if [[ -z $pid ]]; then
-  printf '{"running":false}\n'
+  # "installed" lets the widget stay in the bar, offering Start, only on a
+  # machine that has the VM set up (the installer saves these credentials).
+  installed=false
+  [[ -f $HOME/.config/windows/credentials ]] && installed=true
+  printf '{"running":false,"installed":%s}\n' "$installed"
   exit 0
 fi
 

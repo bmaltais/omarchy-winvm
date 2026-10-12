@@ -60,6 +60,28 @@ fi
 # which read it from the process environment (readable only by this user).
 # /cert:ignore is safe only because the target is the local container.
 export WINVM_RDP=1
+
+# Maximize or fullscreen the window, per the mode saved by the panel's cog
+# (bin/winvm-mode). Both are Hyprland's own states: "maximized" fills the screen
+# but leaves the bar and gaps alone, "fullscreen" covers everything. FreeRDP has
+# no flag for maximized (/f is fullscreen, /w and /h are fixed sizes), so wait
+# for our window to map and ask the compositor. Only the window titled below is
+# touched, and giving up after 30s leaves it as it came. "windowed" leaves it
+# alone entirely.
+mode=$("${BASH_SOURCE[0]%/*}/winvm-mode" get)
+if [[ $mode != windowed ]]; then
+  (
+    for _ in $(seq 60); do
+      addr=$(hyprctl clients -j | jq -r '.[] | select(.class == "xfreerdp" and .title == "Windows VM - Omarchy") | .address' | head -1)
+      if [[ -n $addr ]]; then
+        hyprctl dispatch "hl.dsp.focus({ window = \"address:$addr\" })" >/dev/null
+        hyprctl dispatch "hl.dsp.window.fullscreen({ mode = \"$mode\", action = \"set\" })" >/dev/null
+        exit 0
+      fi
+      sleep 0.5
+    done
+  ) &
+fi
 exec 3<<ARGS
 /u:$WIN_USER
 /p:$WIN_PASS

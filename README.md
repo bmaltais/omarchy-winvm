@@ -1,7 +1,8 @@
 # Windows VM — an Omarchy bar widget
 
-Your Windows VM, one click away. It's an icon that turns up in the bar only
-while Omarchy's Windows VM (`omarchy-windows-vm`) is running.
+Your Windows VM, one click away. It's an icon in the bar that's red while
+Omarchy's Windows VM (`omarchy-windows-vm`) is off, with a Start button in its
+panel, and green while it runs.
 
 ![Windows VM: an icon that appears only while the VM runs, and what it's costing your machine](preview.png)
 
@@ -11,8 +12,10 @@ Omarchy can run Windows in a VM, but once it's going, it's easy to lose
 track of: is it still running? How much is it eating? How do I get back to
 it? This answers all three from the bar.
 
-**It's only there when it matters.** No VM, no icon. Start Windows and the
-icon appears. Shut it down and it's gone again.
+**Always there, red when off.** The icon is green while the VM runs and red
+while it's off. Click it (or right-click) to start Windows. `bin/winvm-start`
+clears the setgid bit on `~/Windows` (see Troubleshooting) and starts the
+container. Without the VM installed, the icon stays hidden.
 
 ![The bar with the VM off, and with it running](screenshots/1-appears.png)
 
@@ -31,8 +34,9 @@ cleanly. The keyboard works too: `c`, `w`, `f`, `s`.
 ![The VM idle and not connected, one click from Connect](screenshots/3-idle.png)
 
 **Never nags.** Watching the VM never asks for a password, because every number
-comes from files you can already read. Only Stop asks, through Omarchy's own
-prompt, as it always does.
+comes from files you can already read. Start and Stop don't ask either if your user
+can already use Docker (the `docker` group); otherwise they go through
+Omarchy's own prompt, as they always did.
 
 ## Install
 
@@ -51,9 +55,24 @@ omarchy plugin remove blacksheep.winvm
 
 This takes it out of the bar and deletes the plugin folder. It changes nothing
 else: the VM, its data in `~/.windows` and `~/Windows`, and its credentials
-are Omarchy's and stay as they are. The only file the plugin ever creates is
+are Omarchy's and stay as they are. The only files the plugin ever creates are
+`~/.config/windows/winvm-window-mode` (your window choice, below) and
 `~/.config/windows/krb5.conf`, and only if the Omarchy launcher hasn't
 already created it (see Connect below). It's safe to leave in place.
+
+## Settings
+
+The cog in the panel's header chooses how **Connect** opens the Windows
+window, and it takes effect on the next Connect:
+
+- **Window**: a normal tiled window.
+- **Maximized** (the default): fills the screen but keeps the bar and gaps.
+- **Fullscreen**: covers everything, bar included.
+
+Maximized and fullscreen are Hyprland's own states, applied by
+`bin/winvm-connect` once the window appears. The choice is one word in
+`~/.config/windows/winvm-window-mode`; `bin/winvm-mode get` and
+`bin/winvm-mode set <mode>` read and write it.
 
 ## Interactions
 
@@ -82,7 +101,15 @@ local users can't read it from `/proc/<pid>/cmdline`. `/cert:ignore` skips RDP
 certificate checks, which is safe only because the target is always the local
 container on `127.0.0.1`.
 
-**Stop** asks for your password once. If the original `launch` is still
+**Start and Stop** use plain `docker start` / `docker stop` on the
+`omarchy-windows` container when your user already has Docker access, so there
+is no prompt, and Stop leaves the container in place for the next Start. The
+plugin never grants itself that access. Without it, or when the container
+hasn't been created yet (first run, or after a reboot dropped the protected
+mounts), Start falls back to `omarchy-windows-vm launch --keep-alive`, which
+opens an RDP window and asks once.
+
+Without Docker access, **Stop** asks for your password once. If the original `launch` is still
 waiting on its RDP window, `bin/winvm-stop` closes that window and lets the
 launcher stop the VM, as it would anyway. Stopping the container directly
 would make the launcher ask for a password a second time. Docker's SIGTERM
