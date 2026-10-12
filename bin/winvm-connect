@@ -16,21 +16,11 @@ if [[ ${1:-} != --open ]]; then
   exec omarchy-launch-or-focus xfreerdp "$0 --open"
 fi
 
-CREDENTIALS_FILE="$HOME/.config/windows/credentials"
-
-read_credential() {
-  local want="$1" key value
-  [[ -f $CREDENTIALS_FILE ]] || return 1
-  while IFS='=' read -r key value; do
-    [[ $key == "$want" ]] && { printf '%s' "$value"; return 0; }
-  done <"$CREDENTIALS_FILE"
-  return 1
-}
+here=${BASH_SOURCE[0]%/*}
 
 # No guessing: `docker`/`admin` are the image's well-known defaults, and a
 # plugin that silently tries them is one nobody asked to try them.
-if ! WIN_USER=$(read_credential USERNAME) || ! WIN_PASS=$(read_credential PASSWORD) ||
-  [[ -z $WIN_USER || -z $WIN_PASS ]]; then
+if ! WIN_USER=$("$here/winvm-credential" USERNAME) || ! WIN_PASS=$("$here/winvm-credential" PASSWORD); then
   notify-send -u critical "Windows VM" \
     "No saved credentials in ~/.config/windows/credentials. Connect with: omarchy-windows-vm launch"
   exit 1
@@ -60,7 +50,7 @@ fi
 # for our window to map and ask the compositor. Only the window titled below is
 # touched, and giving up after 30s leaves it as it came. "windowed" leaves it
 # alone entirely.
-mode=$("${BASH_SOURCE[0]%/*}/winvm-mode" get)
+mode=$("$here/winvm-mode" get)
 if [[ $mode != windowed ]]; then
   (
     for _ in $(seq 60); do
@@ -94,4 +84,4 @@ exec 3<<ARGS
 /floatbar:sticky:off,default:visible,show:fullscreen
 ${rdp_scale[*]}
 ARGS
-exec "${BASH_SOURCE[0]%/*}/winvm-rdp" run xfreerdp3 /args-from:fd:3
+exec "$here/winvm-rdp" run xfreerdp3 /args-from:fd:3

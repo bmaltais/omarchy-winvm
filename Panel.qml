@@ -44,16 +44,10 @@ Panel {
   property string windowMode: "maximized"
   property bool showSettings: false
 
-  // The VM's cores, RAM and disk, changed while it is off. `tuneLimits` is
-  // what bin/winvm-tune reports (null until it has), `tuneShape` what the
-  // controls are set to, and `tuneMessage` what the last Apply came back with.
-  property bool showTune: false
-  property var tuneLimits: null
-  property var tuneShape: ({ cores: 0, ramGb: 0, diskGb: 0 })
-  property string tuneMessage: ""
-  property bool tuneFailed: false
-  readonly property var tuneVerdict:
-    tuneLimits ? Tune.verdict(tuneLimits, tuneShape) : { ok: false, warn: false, text: "" }
+  // The VM's cores, RAM and disk, changed while it is off. Tune.js owns the
+  // session, as Lifecycle.js owns the phase; `tuneView` is what it draws.
+  property var tune: Tune.initial()
+  readonly property var tuneView: Tune.view(tune)
 
   visible: ui.visible
   implicitWidth: ui.visible ? button.implicitWidth : 0
@@ -79,20 +73,20 @@ Panel {
     life = Lifecycle.observe(life, d)
   }
 
-  function run(script) {
-    Quickshell.execDetached([binDir + "/" + script])
+  function run(script, verb) {
+    Quickshell.execDetached([binDir + "/" + script].concat(verb ? [verb] : []))
   }
 
-  // bin/winvm-start first tries a plain `docker start`, which brings the VM
-  // up with no window and no prompt. Only if that fails does it fall back to
-  // `omarchy-windows-vm launch --keep-alive`, which asks for authorization and
-  // opens an RDP window; keep-alive means closing that window leaves the VM
-  // running, as with Connect.
+  // bin/winvm-container first tries a plain `docker start`, which brings the
+  // VM up with no window and no prompt. Only if that fails does it fall back
+  // to `omarchy-windows-vm launch --keep-alive`, which asks for authorization
+  // and opens an RDP window; keep-alive means closing that window leaves the
+  // VM running, as with Connect.
   function startVm() {
     var r = Lifecycle.start(life, Date.now())
     life = r.state
     if (r.effect !== "start") return
-    run("winvm-start")
+    run("winvm-container", "start")
     close()
   }
 
@@ -101,27 +95,23 @@ Panel {
     Quickshell.execDetached([binDir + "/winvm-mode", "set", mode])
   }
 
+  // Take a move from Tune.js and run what it asks for.
+  function tuneStep(r) {
+    tune = r.state
+    if (r.effect === "limits") limitsProc.running = true
+    else if (r.effect === "apply") tuneProc.running = true
+  }
+
   function toggleTune() {
-    if (!ui.canTune || tuneProc.running) return
-    showTune = !showTune
-    if (!showTune) return
-    tuneMessage = ""
-    tuneLimits = null
-    limitsProc.running = true
+    tuneStep(Tune.toggle(tune, ui.canTune))
   }
 
   function setTune(key, value) {
-    var next = { cores: tuneShape.cores, ramGb: tuneShape.ramGb, diskGb: tuneShape.diskGb }
-    next[key] = value
-    tuneShape = next
+    tune = Tune.pick(tune, key, value)
   }
 
-  // bin/winvm-tune asks for authorization, every time: it rewrites the
-  // root-owned compose through Omarchy's own writer.
   function applyTune() {
-    if (!tuneVerdict.ok || tuneProc.running) return
-    tuneMessage = ""
-    tuneProc.running = true
+    tuneStep(Tune.apply(tune))
   }
 
   function connect() {
@@ -144,7 +134,7 @@ Panel {
   function requestStop() {
     var r = Lifecycle.stop(life, Date.now())
     life = r.state
-    if (r.effect === "stop") run("winvm-stop")
+    if (r.effect === "stop") run("winvm-container", "stop")
   }
 
   Process {
@@ -161,36 +151,15 @@ Panel {
     command: [root.binDir + "/winvm-tune", "limits"]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: {
-        try {
-          root.tuneLimits = JSON.parse(String(text).trim())
-        } catch (e) {
-          return
-        }
-        root.tuneShape = Tune.seed(root.tuneLimits)
-      }
+      onStreamFinished: root.tune = Tune.loaded(root.tune, text)
     }
   }
 
   Process {
     id: tuneProc
-    command: [root.binDir + "/winvm-tune", "apply",
-      String(root.tuneShape.cores), String(root.tuneShape.ramGb), String(root.tuneShape.diskGb)]
+    command: [root.binDir + "/winvm-tune"].concat(root.tuneView.args)
     stderr: StdioCollector { id: tuneErr; waitForEnd: true }
-    onExited: function(code) {
-      var lines = String(tuneErr.text).trim().split("\n")
-      var said = lines[lines.length - 1]
-      root.tuneFailed = code !== 0
-      if (code === 0) {
-        root.tuneMessage = "Saved. " + root.tuneVerdict.text
-        root.showTune = false
-      } else if (/dismissed/i.test(said)) {
-        // The password prompt was closed: nothing was written.
-        root.tuneMessage = ""
-      } else {
-        root.tuneMessage = said || "The VM's configuration could not be written."
-      }
-    }
+    onExited: function(code) { root.tune = Tune.applied(root.tune, code, tuneErr.text) }
   }
 
   Process {
@@ -228,13 +197,12 @@ Panel {
       if (!modeProc.running) modeProc.running = true
     } else {
       showSettings = false
-      showTune = false
-      tuneMessage = ""
+      tune = Tune.close(tune)
     }
   }
 
   // Tune is for a VM that is off; a start closes it.
-  onUiChanged: if (!ui.canTune) showTune = false
+  onUiChanged: if (!ui.canTune) tune = Tune.vmLeftOff(tune)
 
   readonly property color fg: bar ? bar.foreground : Color.foreground
   readonly property string ff: bar ? bar.fontFamily : Style.font.family
@@ -414,7 +382,7 @@ Panel {
           text: "Tune VM"
           iconText: "󰒓"
           tooltipText: "Cores, RAM and disk for the next start (t)"
-          selected: root.showTune
+          selected: root.tuneView.selected
           foreground: root.fg
           fontFamily: root.ff
           fontSize: Style.font.bodySmall
@@ -422,7 +390,7 @@ Panel {
         }
 
         Column {
-          visible: root.showTune && root.tuneLimits !== null
+          visible: root.tuneView.open
           width: parent.width
           spacing: Style.space(6)
 
@@ -435,28 +403,27 @@ Panel {
             Button {
               bordered: true
               text: "−"
-              enabled: !tuneProc.running && Tune.canDropCore(root.tuneShape)
+              enabled: root.tuneView.canDropCore
               foreground: root.fg
               fontFamily: root.ff
               fontSize: Style.font.bodySmall
-              onClicked: root.setTune("cores", root.tuneShape.cores - 1)
+              onClicked: root.setTune("cores", root.tuneView.shape.cores - 1)
             }
 
             InfoValue {
               Layout.fillWidth: true
               horizontalAlignment: Text.AlignHCenter
-              text: root.tuneShape.cores + " of " + (root.tuneLimits ? root.tuneLimits.hostCores : 0) + " threads"
+              text: root.tuneView.shape.cores + " of " + root.tuneView.hostCores + " threads"
             }
 
             Button {
               bordered: true
               text: "+"
-              enabled: !tuneProc.running && root.tuneLimits !== null
-                && Tune.canAddCore(root.tuneLimits, root.tuneShape)
+              enabled: root.tuneView.canAddCore
               foreground: root.fg
               fontFamily: root.ff
               fontSize: Style.font.bodySmall
-              onClicked: root.setTune("cores", root.tuneShape.cores + 1)
+              onClicked: root.setTune("cores", root.tuneView.shape.cores + 1)
             }
           }
 
@@ -468,19 +435,23 @@ Panel {
             columnSpacing: Style.space(6)
             rowSpacing: Style.space(6)
 
+            // The model is a count, so picking a size (which makes a new
+            // view) does not rebuild the buttons under the pointer.
             Repeater {
-              model: root.tuneLimits ? Tune.ramChoices(root.tuneLimits) : []
+              model: root.tuneView.ramChoices.length
 
               Button {
+                readonly property int gb: root.tuneView.ramChoices[index] || 0
+
                 Layout.fillWidth: true
                 bordered: true
-                text: modelData + " GB"
-                selected: root.tuneShape.ramGb === modelData
-                enabled: !tuneProc.running
+                text: gb + " GB"
+                selected: root.tuneView.shape.ramGb === gb
+                enabled: !root.tuneView.busy
                 foreground: root.fg
                 fontFamily: root.ff
                 fontSize: Style.font.bodySmall
-                onClicked: root.setTune("ramGb", modelData)
+                onClicked: root.setTune("ramGb", gb)
               }
             }
           }
@@ -495,30 +466,34 @@ Panel {
             columnSpacing: Style.space(6)
             rowSpacing: Style.space(6)
 
+            // The model is a count, so picking a size (which makes a new
+            // view) does not rebuild the buttons under the pointer.
             Repeater {
-              model: root.tuneLimits ? Tune.diskChoices(root.tuneLimits) : []
+              model: root.tuneView.diskChoices.length
 
               Button {
+                readonly property int gb: root.tuneView.diskChoices[index] || 0
+
                 Layout.fillWidth: true
                 bordered: true
-                text: modelData + " GB"
-                selected: root.tuneShape.diskGb === modelData
-                enabled: !tuneProc.running
+                text: gb + " GB"
+                selected: root.tuneView.shape.diskGb === gb
+                enabled: !root.tuneView.busy
                 foreground: root.fg
                 fontFamily: root.ff
                 fontSize: Style.font.bodySmall
-                onClicked: root.setTune("diskGb", modelData)
+                onClicked: root.setTune("diskGb", gb)
               }
             }
           }
 
           Text {
             width: parent.width
-            text: root.tuneVerdict.text
+            text: root.tuneView.note
             textFormat: Text.PlainText
             wrapMode: Text.WordWrap
-            color: root.tuneVerdict.warn ? "#e0b050" : root.fg
-            opacity: root.tuneVerdict.warn ? 1.0 : 0.6
+            color: root.tuneView.warns ? "#e0b050" : root.fg
+            opacity: root.tuneView.warns ? 1.0 : 0.6
             font.family: root.ff
             font.pixelSize: Style.font.bodySmall
           }
@@ -526,11 +501,11 @@ Panel {
           Button {
             width: parent.width
             bordered: true
-            text: tuneProc.running ? "Applying" : "Apply"
+            text: root.tuneView.applyLabel
             iconText: "󰄬"
-            iconSpinning: tuneProc.running
+            iconSpinning: root.tuneView.busy
             tooltipText: "Save this shape for the next start; asks for your password"
-            enabled: root.tuneVerdict.ok && !tuneProc.running
+            enabled: root.tuneView.canApply
             foreground: root.fg
             fontFamily: root.ff
             fontSize: Style.font.bodySmall
@@ -539,12 +514,12 @@ Panel {
         }
 
         Text {
-          visible: !root.ui.up && root.tuneMessage !== ""
+          visible: !root.ui.up && root.tuneView.message !== ""
           width: parent.width
-          text: root.tuneMessage
+          text: root.tuneView.message
           textFormat: Text.PlainText
           wrapMode: Text.WordWrap
-          color: root.tuneFailed ? root.hot : root.fg
+          color: root.tuneView.failed ? root.hot : root.fg
           font.family: root.ff
           font.pixelSize: Style.font.bodySmall
         }

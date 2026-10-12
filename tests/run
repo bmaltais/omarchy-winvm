@@ -8,4 +8,6 @@ status=0
 node --test tests/*.test.mjs || status=1
 tests/rdp.test.sh || status=1
 tests/tune.test.sh || status=1
+tests/container.test.sh || status=1
+tests/credential.test.sh || status=1
 exit $status
