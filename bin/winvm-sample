@@ -85,7 +85,7 @@ if [[ -f $img ]]; then
 fi
 
 rdp=false
-[[ -n $("${BASH_SOURCE[0]%/*}/winvm-rdp-pids") ]] && rdp=true
+"${BASH_SOURCE[0]%/*}/winvm-rdp" open && rdp=true
 
 host_cores=$(nproc)
 host_mem=$(awk '/^MemTotal:/{print $2 * 1024}' /proc/meminfo)

@@ -56,10 +56,8 @@ fi
 # Arguments go through a file descriptor rather than argv, so the password
 # never appears in /proc/<pid>/cmdline, which every local user can read.
 # /args-from takes the whole command line, so the window title isn't in argv
-# either; WINVM_RDP marks the process for bin/winvm-sample and bin/winvm-stop,
-# which read it from the process environment (readable only by this user).
+# either; bin/winvm-rdp run marks the process so its other verbs can find it.
 # /cert:ignore is safe only because the target is the local container.
-export WINVM_RDP=1
 
 # Maximize or fullscreen the window, per the mode saved by the panel's cog
 # (bin/winvm-mode). Both are Hyprland's own states: "maximized" fills the screen
@@ -97,4 +95,4 @@ exec 3<<ARGS
 /floatbar:sticky:off,default:visible,show:fullscreen
 ${rdp_scale[*]}
 ARGS
-exec xfreerdp3 /args-from:fd:3
+exec "${BASH_SOURCE[0]%/*}/winvm-rdp" run xfreerdp3 /args-from:fd:3
