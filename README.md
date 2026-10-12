@@ -9,7 +9,7 @@ that adds Start, the red/green icon, prompt-free Start and Stop when you have
 Docker access, and a choice of how the Connect window opens. It keeps the
 upstream plugin id, `blacksheep.winvm`, so install it in place of the original.
 
-![Windows VM: an icon that appears only while the VM runs, and what it's costing your machine](preview.png)
+![Windows VM: an icon that shows whether the VM is running, and what it's costing your machine](preview.png)
 
 ## What you get
 
@@ -17,12 +17,21 @@ Omarchy can run Windows in a VM, but once it's going, it's easy to lose
 track of: is it still running? How much is it eating? How do I get back to
 it? This answers all three from the bar.
 
-**Always there, red when off.** The icon is green while the VM runs and red
-while it's off. Click it (or right-click) to start Windows. `bin/winvm-start`
-clears the setgid bit on `~/Windows` (see Troubleshooting) and starts the
-container. Without the VM installed, the icon stays hidden.
+**Always there, and its colour says what the VM is doing.** The icon stays in
+the bar whether or not Windows is running, as long as the VM is installed
+(it's hidden on a machine without it). Its colour is the status:
 
-![The bar with the VM off, and with it running](screenshots/1-appears.png)
+| Colour | State |
+|---|---|
+| green | the VM is running |
+| red | the VM is off |
+| amber | starting up or shutting down |
+
+When it's off, click the icon (or right-click it) to open the panel and press
+**Start**. `bin/winvm-start` clears the setgid bit on `~/Windows` (see
+Troubleshooting) and starts the container.
+
+![The bar with the VM running; the original screenshot, taken before the icon stayed when off](screenshots/1-appears.png)
 
 **What it's costing you.** Click it for the VM's CPU, memory, disk and network,
 measured two ways: against what you gave the guest, and against your whole
@@ -51,7 +60,7 @@ omarchy plugin add https://github.com/bmaltais/omarchy-winvm --enable
 ```
 
 `--enable` places it in the bar; `omarchy plugin enable blacksheep.winvm --before omarchy.agents`
-puts it somewhere specific. It stays hidden until the VM is running.
+puts it somewhere specific. It stays hidden only on a machine where the VM isn't installed.
 
 ## Remove
 
@@ -84,13 +93,13 @@ Maximized and fullscreen are Hyprland's own states, applied by
 
 | Gesture | What happens |
 |---|---|
-| hover | state, CPU, memory, disk and network rates |
+| hover | state, CPU, memory, disk and network rates (just the state while off) |
 | left click | panel |
-| right click | focus the RDP window, or open one |
+| right click | focus the RDP window, or open one; start the VM when it's off |
 | `c` | Connect / Focus |
 | `w` | web console at `http://127.0.0.1:8006` (useful while Windows is still booting and RDP isn't up) |
 | `f` | open `~/Windows`, the folder the guest sees as a network share |
-| `s`, twice | shut the VM down |
+| `s` | start the VM when it's off; shut it down when it's running (press twice) |
 | `r` | resample now |
 
 **Connect** doesn't go through `omarchy-windows-vm launch`, because on a VM
@@ -143,7 +152,7 @@ holds nearly all of its allocation whatever Task Manager says. The meter shows
 what the VM takes from Linux, not how much Windows is using.
 
 A sample takes about 30ms. The widget polls every 5s while closed
-(which is also how quickly the icon appears after the VM starts) and every 2s
+(which is also how quickly the icon turns green after the VM starts) and every 2s
 while the panel is open. Both are settable inline in `shell.json`:
 
 ```json
@@ -164,9 +173,16 @@ plugin itself never uses sudo, pkexec or the Docker socket.
 
 ## Troubleshooting
 
-**The icon never appears.** It only shows while the container is running.
-Check with `bin/winvm-sample`, which prints `{"running":false}` when it can't
-find the VM.
+**The icon never appears.** It only shows when the VM is installed, which the
+widget decides by looking for `~/.config/windows/credentials`. Check with
+`bin/winvm-sample`: it prints `"installed":true` when it finds the VM set up
+(`{"running":false,"installed":true}` while it's off), and `"installed":false`
+if not.
+
+**The icon is red but the VM is running.** The widget finds the VM by looking
+for a `qemu-system-*` process named `windows` inside a `docker-*.scope` cgroup.
+If `bin/winvm-sample` says `"running":false` while Windows is up, that
+detection is what failed (see Requirements).
 
 **The VM starts once, then won't start again.** This is an Omarchy bug, not
 this widget: the container sets the setgid bit on `~/Windows`, and the
