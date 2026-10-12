@@ -22,9 +22,9 @@
 # back unchanged. The password goes in on stdin, never on a command line.
 #
 # Docker reads the compose only when it creates the container, so a container
-# left behind by winvm-stop would start with the old shape. After a successful
-# write this removes it (the disk is a bind mount, not part of the container),
-# and winvm-start falls back to the launcher, which creates a new one.
+# left behind by a stop would start with the old shape. After a successful
+# write this has bin/winvm-container discard it, and the next start falls back
+# to the launcher, which creates a new one.
 #
 # For tests/tune.test.sh, so that no real VM, compose or prompt is involved:
 #   WINVM_COMPOSE, WINVM_CREDENTIALS, WINVM_IMAGE   the three files read
@@ -39,7 +39,8 @@ export LC_ALL=C
 COMPOSE=${WINVM_COMPOSE:-/var/lib/omarchy/windows/docker-compose.yml}
 CREDENTIALS=${WINVM_CREDENTIALS:-$HOME/.config/windows/credentials}
 IMAGE=${WINVM_IMAGE:-$HOME/.windows/data.img}
-CONTAINER=omarchy-windows
+
+here=${BASH_SOURCE[0]%/*}
 
 # Windows 11 will not install on less, and the installer leaves this much room
 # beside the disk for the Windows image.
@@ -93,22 +94,12 @@ disk_gb() {
   printf '%d' "$((image > compose ? image : compose))"
 }
 
-credential() {
-  local want=$1 key value
-  [[ -f $CREDENTIALS ]] || return 1
-  # Split on the first = only: a password may contain one.
-  while IFS='=' read -r key value; do
-    [[ $key == "$want" ]] && { printf '%s' "$value"; return 0; }
-  done <"$CREDENTIALS"
-  return 1
-}
-
 running() {
   if [[ -n ${WINVM_RUNNING-} ]]; then
     [[ $WINVM_RUNNING == 1 ]]
     return
   fi
-  "${BASH_SOURCE[0]%/*}/winvm-sample" 2>/dev/null | grep -q '"running":true'
+  "$here/winvm-sample" 2>/dev/null | grep -q '"running":true'
 }
 
 limits() {
@@ -149,9 +140,9 @@ apply() {
   fi
 
   local username password tz
-  username=$(credential USERNAME) && [[ -n $username ]] ||
+  username=$("$here/winvm-credential" USERNAME) ||
     die "no login in $CREDENTIALS: run omarchy-windows-vm install first"
-  password=$(credential PASSWORD) && [[ -n $password ]] ||
+  password=$("$here/winvm-credential" PASSWORD) ||
     die "no password in $CREDENTIALS: run omarchy-windows-vm install first"
   tz=$(timedatectl show -p Timezone --value 2>/dev/null)
   [[ $tz =~ ^[A-Za-z0-9_/.+-]{1,64}$ ]] || tz=UTC
@@ -168,10 +159,8 @@ apply() {
   [[ -n $writer && $(stat -c '%u' -- "$writer" 2>/dev/null) == 0 ]] ||
     die "omarchy-windows-vm is missing or not root-owned"
 
-  # The container leaves the setgid bit on ~/Windows, and the writer's mount
-  # check then fails without a word (omacom/omarchy#13244), as it does for
-  # winvm-start. Clear the bit first.
-  chmod g-s "$HOME/Windows" 2>/dev/null
+  # The writer runs the mount check that the setgid bit on ~/Windows fails.
+  "$here/winvm-container" clear-setgid
 
   if ! message=$(printf 'RAM=%sG\nCORES=%s\nDISK=%sG\nUSERNAME=%s\nPASSWORD=%s\nTZ=%s\n' \
     "$ram" "$cores" "$disk" "$username" "$password" "$tz" |
@@ -181,8 +170,7 @@ apply() {
     exit 1
   fi
 
-  docker rm "$CONTAINER" >/dev/null 2>&1
-  return 0
+  "$here/winvm-container" discard
 }
 
 case ${1-} in

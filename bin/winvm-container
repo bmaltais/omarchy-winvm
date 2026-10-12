@@ -1,0 +1,101 @@
+#!/bin/bash
+# The Windows VM's Docker container: starting it, stopping it, and what is
+# left behind in between.
+#
+#   winvm-container start         bring the VM up, without a window where possible
+#   winvm-container stop          shut Windows down, with at most one prompt
+#   winvm-container discard       remove the stopped container, so the next
+#                                 start creates one from the compose
+#   winvm-container clear-setgid  clear the bit that makes Omarchy's mount
+#                                 check fail; exit 0 either way
+#
+# The rule the verbs share: `stop` leaves the stopped container in place,
+# `start` brings that one back with no prompt, and `discard` removes it when
+# it no longer matches the compose (bin/winvm-tune, after a new shape).
+#
+# The plugin never grants itself Docker access; it only uses what the user
+# already has, and falls back to Omarchy's launcher, which asks once.
+
+set -u
+
+CONTAINER=omarchy-windows
+
+rdp=${BASH_SOURCE[0]%/*}/winvm-rdp
+
+# Can this user see the container? False without Docker access, and when the
+# container has not been created or was removed.
+have_container() { docker inspect "$CONTAINER" >/dev/null 2>&1; }
+
+# The container sets the setgid bit on ~/Windows while it runs, and the mount
+# check in omarchy-windows-vm then fails without saying why
+# (omacom/omarchy#13244). Clear it before anything that goes through that
+# check: the launcher, and the compose writer.
+clear_setgid() {
+  chmod g-s "$HOME/Windows" 2>/dev/null
+  return 0
+}
+
+# When this user can already talk to Docker (docker group, or sudoless Docker)
+# and the container exists, `docker start` brings it back with no prompt. That
+# is what `stop` leaves behind.
+#
+# Otherwise (first start, after `omarchy-windows-vm stop` or `discard` removed
+# the container, after a reboot dropped the protected mounts, or no Docker
+# access) fall back to the launcher, which does the privileged bring-up and
+# asks once. That also opens an RDP window; --keep-alive leaves the VM running
+# when it closes.
+start() {
+  clear_setgid
+  if have_container && docker start "$CONTAINER" >/dev/null 2>&1; then
+    exit 0
+  fi
+  exec omarchy-windows-vm launch --keep-alive
+}
+
+# A plain `omarchy-windows-vm launch` stays behind waiting on its RDP window,
+# and stops the VM itself when that window closes. Stopping the container
+# underneath it drops the window, and then the launcher asks for a password to
+# stop a VM that is already gone. So when that launcher is still waiting, close
+# its window and let it do the stop. Otherwise (launched with --keep-alive, or
+# the waiting launcher is gone) close any RDP window and stop it directly.
+#
+# Docker stops the container with SIGTERM, which dockurr/windows turns into an
+# ACPI shutdown for the guest, so Windows gets to shut down cleanly.
+stop() {
+  if "$rdp" launcher-waiting && "$rdp" open; then
+    "$rdp" close
+    exit 0
+  fi
+
+  "$rdp" close
+
+  # With Docker access, stop the container and leave it in place: no prompt,
+  # and `start` can bring it straight back. `omarchy-windows-vm stop` removes
+  # the container (compose down), which only the privileged bring-up can
+  # recreate, and asks for authorization once.
+  if have_container; then
+    exec docker stop "$CONTAINER" >/dev/null
+  fi
+
+  exec omarchy-windows-vm stop
+}
+
+# Docker reads the compose only when it creates the container, so a stopped
+# one starts with the shape it was created with. The disk is a bind mount,
+# not part of the container. Without Docker access there is no stopped
+# container either: `omarchy-windows-vm stop` already removed it.
+discard() {
+  docker rm "$CONTAINER" >/dev/null 2>&1
+  return 0
+}
+
+case ${1:-} in
+  start) start ;;
+  stop) stop ;;
+  discard) discard ;;
+  clear-setgid) clear_setgid ;;
+  *)
+    echo "usage: winvm-container start | stop | discard | clear-setgid" >&2
+    exit 2
+    ;;
+esac

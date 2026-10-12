@@ -29,8 +29,8 @@ the bar whether or not Windows is running, as long as the VM is installed
 | amber | starting up or shutting down |
 
 When it's off, click the icon (or right-click it) to open the panel and press
-**Start**. `bin/winvm-start` clears the setgid bit on `~/Windows` (see
-Troubleshooting) and starts the container.
+**Start**. `bin/winvm-container start` clears the setgid bit on `~/Windows`
+(see Troubleshooting) and starts the container.
 
 ![The bar icon when the VM is off (red), starting (amber) and running (green)](screenshots/1-states.png)
 
@@ -120,8 +120,9 @@ command line). That writer regenerates the whole file, so a key you added to
 the compose by hand is dropped.
 
 Docker only reads the compose when it creates the container, so Apply also
-removes the stopped container. The next **Start** therefore goes through
-Omarchy's launcher, which creates a new one and opens a Windows session.
+removes the stopped container (`bin/winvm-container discard`). The next
+**Start** therefore goes through Omarchy's launcher, which creates a new one
+and opens a Windows session.
 
 The idea comes from [diogochaves/omarchy-omawin](https://github.com/diogochaves/omarchy-omawin).
 
@@ -162,7 +163,7 @@ mounts), Start falls back to `omarchy-windows-vm launch --keep-alive`, which
 opens an RDP window and asks once.
 
 Without Docker access, **Stop** asks for your password once. If the original `launch` is still
-waiting on its RDP window, `bin/winvm-stop` closes that window and lets the
+waiting on its RDP window, `bin/winvm-container stop` closes that window and lets the
 launcher stop the VM, as it would anyway. Stopping the container directly
 would make the launcher ask for a password a second time. Docker's SIGTERM
 becomes an ACPI shutdown in the guest, so Windows gets to shut down cleanly.
@@ -182,12 +183,18 @@ stops or connects to a real VM.
   VM is in (off, starting, running, confirming a stop, stopping) and what the
   panel offers in each.
 - `tests/tune.test.mjs` covers `Tune.js`, which decides which cores, RAM and
-  disk sizes the panel offers and whether a shape can be applied.
+  disk sizes the panel offers and whether a shape can be applied, and runs the
+  Tune section from opening it to what Apply came back with.
 - `tests/tune.test.sh` runs `bin/winvm-tune` against a compose, credentials
   and disk image in a temp directory, as a dry run: nothing is written and
   nothing prompts.
 - `tests/rdp.test.sh` exercises `bin/winvm-rdp` against fake processes under
   made-up names, so a real session is never touched.
+- `tests/container.test.sh` runs `bin/winvm-container` (start, stop, and
+  removing the stopped container) with a fake `docker` and a fake
+  `omarchy-windows-vm` on `PATH`, and checks what each was asked.
+- `tests/credential.test.sh` covers `bin/winvm-credential`, which reads the
+  saved Windows login for Connect and Tune VM.
 
 ## The numbers
 
