@@ -20,10 +20,10 @@ const upReading = { installed: true, running: true }
 
 function inPhase(phase, now = 0) {
   let s = L.initial()
-  s = L.observe(s, offReading, now)
+  s = L.observe(s, offReading)
   if (phase === "off") return s
   if (phase === "starting") return L.start(s, now).state
-  s = L.observe(s, upReading, now)
+  s = L.observe(s, upReading)
   if (phase === "running") return s
   s = L.stop(s, now).state
   if (phase === "confirming") return s
@@ -35,16 +35,16 @@ test("a fresh lifecycle is absent", () => {
 })
 
 test("a sample of a VM that is not installed is absent", () => {
-  assert.equal(L.observe(L.initial(), absentReading, 0).phase, "absent")
+  assert.equal(L.observe(L.initial(), absentReading).phase, "absent")
 })
 
 test("an installed VM that is not running is off", () => {
-  assert.equal(L.observe(L.initial(), offReading, 0).phase, "off")
+  assert.equal(L.observe(L.initial(), offReading).phase, "off")
 })
 
 test("a running VM is running, even if the sample says not installed", () => {
-  assert.equal(L.observe(L.initial(), upReading, 0).phase, "running")
-  assert.equal(L.observe(L.initial(), { installed: false, running: true }, 0).phase, "running")
+  assert.equal(L.observe(L.initial(), upReading).phase, "running")
+  assert.equal(L.observe(L.initial(), { installed: false, running: true }).phase, "running")
 })
 
 test("Start from off begins starting and asks the panel to launch", () => {
@@ -74,12 +74,17 @@ test("starting falls back to off at 180 s (password prompt declined)", () => {
 
 test("starting becomes running when a sample says running", () => {
   const s = inPhase("starting", 0)
-  assert.equal(L.observe(s, upReading, 5000).phase, "running")
+  assert.equal(L.observe(s, upReading).phase, "running")
 })
 
 test("starting stays starting while samples say not running", () => {
   const s = inPhase("starting", 0)
-  assert.equal(L.observe(s, offReading, 5000).phase, "starting")
+  assert.equal(L.observe(s, offReading).phase, "starting")
+})
+
+test("starting ends as absent when the VM is no longer installed", () => {
+  const s = inPhase("starting", 0)
+  assert.equal(L.observe(s, absentReading).phase, "absent")
 })
 
 test("the first Stop press asks for confirmation and launches nothing", () => {
@@ -138,22 +143,22 @@ test("Stop does nothing while starting", () => {
 
 for (const phase of ["running", "confirming", "stopping"]) {
   test(`a not-running sample ends ${phase} as off`, () => {
-    assert.equal(L.observe(inPhase(phase, 0), offReading, 50).phase, "off")
+    assert.equal(L.observe(inPhase(phase, 0), offReading).phase, "off")
   })
   test(`a not-installed, not-running sample ends ${phase} as absent`, () => {
-    assert.equal(L.observe(inPhase(phase, 0), absentReading, 50).phase, "absent")
+    assert.equal(L.observe(inPhase(phase, 0), absentReading).phase, "absent")
   })
 }
 
 for (const phase of ["confirming", "stopping"]) {
   test(`a running sample keeps ${phase}`, () => {
-    assert.equal(L.observe(inPhase(phase, 0), upReading, 50).phase, phase)
+    assert.equal(L.observe(inPhase(phase, 0), upReading).phase, phase)
   })
 }
 
 test("a running sample does not extend the confirming deadline", () => {
   const s = L.stop(inPhase("running", 0), 1000).state
-  const s2 = L.observe(s, upReading, 3000)
+  const s2 = L.observe(s, upReading)
   assert.equal(L.tick(s2, 5000).phase, "running")
 })
 
@@ -190,12 +195,12 @@ for (const [phase, want] of Object.entries(views)) {
 }
 
 const words = {
-  absent: { tone: "off", status: "Off", word: "off", startLabel: "Start", stopLabel: "Stop", stopWarns: false },
-  off: { tone: "off", status: "Off", word: "off", startLabel: "Start", stopLabel: "Stop", stopWarns: false },
-  starting: { tone: "busy", status: "Starting…", word: "starting", startLabel: "Starting", stopLabel: "Stop", stopWarns: false },
-  running: { tone: "up", status: null, word: null, startLabel: "Start", stopLabel: "Stop", stopWarns: false },
-  confirming: { tone: "up", status: null, word: null, startLabel: "Start", stopLabel: "Confirm", stopWarns: true },
-  stopping: { tone: "busy", status: "Shutting down…", word: "shutting down", startLabel: "Start", stopLabel: "Stopping", stopWarns: false }
+  absent: { tone: "off", status: "Off", tooltipWord: "off", startLabel: "Start", stopLabel: "Stop", stopWarns: false },
+  off: { tone: "off", status: "Off", tooltipWord: "off", startLabel: "Start", stopLabel: "Stop", stopWarns: false },
+  starting: { tone: "busy", status: "Starting…", tooltipWord: "starting", startLabel: "Starting", stopLabel: "Stop", stopWarns: false },
+  running: { tone: "up", status: null, tooltipWord: null, startLabel: "Start", stopLabel: "Stop", stopWarns: false },
+  confirming: { tone: "up", status: null, tooltipWord: null, startLabel: "Start", stopLabel: "Confirm", stopWarns: true },
+  stopping: { tone: "busy", status: "Shutting down…", tooltipWord: "shutting down", startLabel: "Start", stopLabel: "Stopping", stopWarns: false }
 }
 for (const [phase, want] of Object.entries(words)) {
   test(`how ${phase} reads`, () => {

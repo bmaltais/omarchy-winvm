@@ -53,12 +53,6 @@ if ((pct >= 170)); then rdp_scale=(/scale:180)
 elif ((pct >= 130)); then rdp_scale=(/scale:140)
 fi
 
-# Arguments go through a file descriptor rather than argv, so the password
-# never appears in /proc/<pid>/cmdline, which every local user can read.
-# /args-from takes the whole command line, so the window title isn't in argv
-# either; bin/winvm-rdp run marks the process so its other verbs can find it.
-# /cert:ignore is safe only because the target is the local container.
-
 # Maximize or fullscreen the window, per the mode saved by the panel's cog
 # (bin/winvm-mode). Both are Hyprland's own states: "maximized" fills the screen
 # but leaves the bar and gaps alone, "fullscreen" covers everything. FreeRDP has
@@ -80,6 +74,11 @@ if [[ $mode != windowed ]]; then
     done
   ) &
 fi
+# Arguments go through a file descriptor rather than argv, so the password
+# never appears in /proc/<pid>/cmdline, which every local user can read.
+# /args-from takes the whole command line, so the window title isn't in argv
+# either; bin/winvm-rdp run marks the process so its other verbs can find it.
+# /cert:ignore is safe only because the target is the local container.
 exec 3<<ARGS
 /u:$WIN_USER
 /p:$WIN_PASS

@@ -33,19 +33,19 @@ Panel {
   property var d: Model.derive(null, null)
 
   // The VM's phase (off, starting, running, confirming a stop, stopping) and
-  // when a timed phase gives up. Lifecycle.js owns every transition; `phase`
-  // is what the rest of this file reads, and never names a phase itself.
+  // when a timed phase gives up. Lifecycle.js owns every transition; `ui` is
+  // what that phase means for this file, which never names a phase itself.
   property var life: Lifecycle.initial()
-  readonly property var phase: Lifecycle.view(life)
+  readonly property var ui: Lifecycle.view(life)
 
   // How Connect opens the window; saved by bin/winvm-mode so the connect
   // script can read it without going through the shell.
   property string windowMode: "maximized"
   property bool showSettings: false
 
-  visible: phase.visible
-  implicitWidth: phase.visible ? button.implicitWidth : 0
-  implicitHeight: phase.visible ? (bar ? bar.barSize : 26) : 0
+  visible: ui.visible
+  implicitWidth: ui.visible ? button.implicitWidth : 0
+  implicitHeight: ui.visible ? (bar ? bar.barSize : 26) : 0
 
   function refresh() {
     if (sampleProc.running) return
@@ -64,7 +64,7 @@ Panel {
     prevSample = sample
     sample = next
     d = Model.derive(sample, prevSample)
-    life = Lifecycle.observe(life, d, Date.now())
+    life = Lifecycle.observe(life, d)
   }
 
   function run(script) {
@@ -140,13 +140,14 @@ Panel {
 
   // Fires when the phase's deadline passes: a start or stop declined at the
   // password prompt, or a Stop press nobody confirmed. The deadline is an
-  // absolute Date.now() time and a Timer interval is relative, so re-derive it
-  // whenever the lifecycle changes. The extra 50 ms keeps a timer that fires a
-  // hair early from finding the deadline not yet reached and never rearming.
+  // absolute Date.now() time and a Timer interval is relative, so the interval
+  // is re-derived whenever the lifecycle changes. Once it has fired the wait is
+  // over whatever the wall clock says now: a clock stepped back in the meantime
+  // must not leave the phase stuck with no timer running.
   Timer {
     running: root.life.deadline > 0
-    interval: Math.max(1, root.life.deadline - Date.now()) + 50
-    onTriggered: root.life = Lifecycle.tick(root.life, Date.now())
+    interval: Math.max(1, root.life.deadline - Date.now())
+    onTriggered: root.life = Lifecycle.tick(root.life, Math.max(Date.now(), root.life.deadline))
   }
 
   onOpenedChanged: {
@@ -165,19 +166,19 @@ Panel {
   // Green while the VM runs, red while it is off. Mid-transition (starting or
   // shutting down) is amber, so it never reads as either settled state.
   readonly property color statusColor: {
-    if (phase.tone === "busy") return "#e0b050"
-    return phase.tone === "up" ? "#5fbf6f" : root.hot
+    if (ui.tone === "busy") return "#e0b050"
+    return ui.tone === "up" ? "#5fbf6f" : root.hot
   }
 
   readonly property string stateText: {
-    if (phase.status) return phase.status
+    if (ui.status) return ui.status
     return (d.rdp ? "Connected" : "Running, not connected") + " · up " + Model.uptimeText(d.uptime)
   }
 
   readonly property string tooltipSummary: {
-    if (!phase.up) return "Windows VM — " + phase.word
+    if (!ui.up) return "Windows VM — " + ui.tooltipWord
     return [
-      "Windows VM — " + (phase.word || (d.rdp ? "connected" : "running")),
+      "Windows VM — " + (ui.tooltipWord || (d.rdp ? "connected" : "running")),
       "CPU " + Model.percent(d.cpu) + " of " + d.vcpus + " vCPUs"
         + "   Mem " + Model.bytes(d.memBytes) + " / " + Model.bytes(d.ramBytes),
       "Disk " + Model.rateText(d.ioRead + d.ioWrite)
@@ -198,7 +199,7 @@ Panel {
     onPressed: function(b) {
       // Right-click is the shortcut for what you want most: the VM's window.
       if (b === Qt.RightButton) {
-        if (root.phase.up) root.connect()
+        if (root.ui.up) root.connect()
         else root.startVm()
         return
       }
@@ -223,7 +224,7 @@ Panel {
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
         var k = String(t).toLowerCase()
-        if (!root.phase.up) {
+        if (!root.ui.up) {
           if (k === "s") root.startVm()
           else if (k === "r") root.refresh()
         }
@@ -261,7 +262,7 @@ Panel {
             Text {
               text: "󰖳"
               textFormat: Text.PlainText
-              color: root.phase.busy ? root.statusColor : root.fg
+              color: root.ui.busy ? root.statusColor : root.fg
               font.family: root.ff
               font.pixelSize: Style.font.display
             }
@@ -314,14 +315,14 @@ Panel {
         }
 
         Button {
-          visible: !root.phase.up
+          visible: !root.ui.up
           width: parent.width
           bordered: true
-          text: root.phase.startLabel
+          text: root.ui.startLabel
           iconText: "󰐊"
-          iconSpinning: root.phase.startSpins
+          iconSpinning: root.ui.startSpins
           tooltipText: "Start the VM and open a Windows session (s)"
-          enabled: root.phase.canStart
+          enabled: root.ui.canStart
           foreground: root.fg
           fontFamily: root.ff
           fontSize: Style.font.bodySmall
@@ -332,7 +333,7 @@ Panel {
         // what tells you whether Windows itself is starved. The note puts it
         // against the host, which is what tells you what it is costing you.
         Column {
-          visible: root.phase.up
+          visible: root.ui.up
           width: parent.width
           spacing: Style.space(8)
 
@@ -388,10 +389,10 @@ Panel {
           }
         }
 
-        PanelSeparator { visible: root.phase.up; width: parent.width }
+        PanelSeparator { visible: root.ui.up; width: parent.width }
 
         GridLayout {
-          visible: root.phase.up
+          visible: root.ui.up
           width: parent.width
           columns: 2
           columnSpacing: Style.space(14)
@@ -410,10 +411,10 @@ Panel {
           InfoValue { text: root.d.container || "—" }
         }
 
-        PanelSeparator { visible: root.phase.up; width: parent.width }
+        PanelSeparator { visible: root.ui.up; width: parent.width }
 
         RowLayout {
-          visible: root.phase.up
+          visible: root.ui.up
           width: parent.width
           spacing: Style.space(6)
 
@@ -423,7 +424,7 @@ Panel {
             text: root.d.rdp ? "Focus" : "Connect"
             iconText: "󰢹"
             tooltipText: root.d.rdp ? "Bring the RDP window forward (c)" : "Open an RDP session (c)"
-            enabled: root.phase.canConnect
+            enabled: root.ui.canConnect
             foreground: root.fg
             fontFamily: root.ff
             fontSize: Style.font.bodySmall
@@ -457,12 +458,12 @@ Panel {
           Button {
             Layout.fillWidth: true
             bordered: true
-            text: root.phase.stopLabel
+            text: root.ui.stopLabel
             iconText: "󰐥"
-            iconSpinning: root.phase.stopSpins
+            iconSpinning: root.ui.stopSpins
             tooltipText: "Shut Windows down and stop the container (s, twice)"
-            enabled: root.phase.canStop
-            foreground: root.phase.stopWarns ? root.hot : root.fg
+            enabled: root.ui.canStop
+            foreground: root.ui.stopWarns ? root.hot : root.fg
             fontFamily: root.ff
             fontSize: Style.font.bodySmall
             onClicked: root.requestStop()
@@ -470,7 +471,7 @@ Panel {
         }
 
         Text {
-          visible: !root.phase.up
+          visible: !root.ui.up
           width: parent.width
           text: "s start · r refresh"
           textFormat: Text.PlainText
@@ -481,7 +482,7 @@ Panel {
         }
 
         Text {
-          visible: root.phase.up
+          visible: root.ui.up
           width: parent.width
           text: "c connect · w console · f shared · s stop · r refresh"
           textFormat: Text.PlainText

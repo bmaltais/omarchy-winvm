@@ -33,14 +33,14 @@ function initial() {
 // Apply a sample (what Model.derive returns). A running VM counts as
 // installed. Confirming and stopping outlive a running sample: the VM is
 // still up while we wait for the second press or for Windows to finish.
-function observe(state, readings, now) {
+// Starting outlives a not-running one, for as long as the VM is installed.
+function observe(state, readings) {
+  var p = state.phase
   if (readings.running) {
-    var p = state.phase
-    if (p === "confirming" || p === "stopping") return state
-    return make("running", 0)
+    return p === "confirming" || p === "stopping" ? state : make("running", 0)
   }
-  if (state.phase === "starting") return state
-  return make(readings.installed ? "off" : "absent", 0)
+  if (!readings.installed) return make("absent", 0)
+  return p === "starting" ? state : make("off", 0)
 }
 
 function start(state, now) {
@@ -65,26 +65,36 @@ function tick(state, now) {
   return make(state.phase === "starting" ? "off" : "running", 0)
 }
 
-// What the phase means for the panel. `status` and `word` are null when the
-// panel has to say it itself (running or confirming: connected or not, uptime).
-// `tone` is "off", "busy" (amber) or "up"; the panel owns the actual colours.
+// What each phase means for the panel. `status` and `tooltipWord` are null
+// where the panel has to say it itself (running or confirming: connected or
+// not, uptime). `tone` is "off", "busy" (amber) or "up"; the panel owns the
+// actual colours. A field left out is false, and the labels default to the
+// idle ones.
+var VIEWS = {
+  absent: { tone: "off", status: "Off", tooltipWord: "off" },
+  off: { visible: true, tone: "off", canStart: true, status: "Off", tooltipWord: "off" },
+  starting: { visible: true, tone: "busy", startLabel: "Starting", status: "Starting…", tooltipWord: "starting" },
+  running: { visible: true, up: true, tone: "up", canStop: true, canConnect: true },
+  confirming: { visible: true, up: true, tone: "up", canStop: true, canConnect: true, stopLabel: "Confirm", stopWarns: true },
+  stopping: { visible: true, up: true, tone: "busy", stopLabel: "Stopping", status: "Shutting down…", tooltipWord: "shutting down" }
+}
+
 function view(state) {
-  var p = state.phase
-  var up = p === "running" || p === "confirming" || p === "stopping"
+  var v = VIEWS[state.phase]
   return {
-    visible: p !== "absent",
-    up: up,
-    busy: p === "starting" || p === "stopping",
-    tone: p === "starting" || p === "stopping" ? "busy" : (up ? "up" : "off"),
-    canStart: p === "off",
-    canStop: p === "running" || p === "confirming",
-    canConnect: p === "running" || p === "confirming",
-    startLabel: p === "starting" ? "Starting" : "Start",
-    startSpins: p === "starting",
-    stopLabel: p === "stopping" ? "Stopping" : (p === "confirming" ? "Confirm" : "Stop"),
-    stopSpins: p === "stopping",
-    stopWarns: p === "confirming",
-    status: p === "starting" ? "Starting…" : (p === "stopping" ? "Shutting down…" : (up ? null : "Off")),
-    word: p === "starting" ? "starting" : (p === "stopping" ? "shutting down" : (up ? null : "off"))
+    visible: !!v.visible,
+    up: !!v.up,
+    busy: v.tone === "busy",
+    tone: v.tone,
+    canStart: !!v.canStart,
+    canStop: !!v.canStop,
+    canConnect: !!v.canConnect,
+    startLabel: v.startLabel || "Start",
+    startSpins: state.phase === "starting",
+    stopLabel: v.stopLabel || "Stop",
+    stopSpins: state.phase === "stopping",
+    stopWarns: !!v.stopWarns,
+    status: v.status || null,
+    tooltipWord: v.tooltipWord || null
   }
 }
