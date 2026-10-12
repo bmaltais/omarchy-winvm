@@ -74,7 +74,7 @@ Panel {
   }
 
   function run(script, verb) {
-    Quickshell.execDetached([binDir + "/" + script].concat(verb ? [verb] : []))
+    Quickshell.execDetached(verb ? [binDir + "/" + script, verb] : [binDir + "/" + script])
   }
 
   // bin/winvm-container first tries a plain `docker start`, which brings the
@@ -466,8 +466,6 @@ Panel {
             columnSpacing: Style.space(6)
             rowSpacing: Style.space(6)
 
-            // The model is a count, so picking a size (which makes a new
-            // view) does not rebuild the buttons under the pointer.
             Repeater {
               model: root.tuneView.diskChoices.length
 

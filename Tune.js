@@ -92,8 +92,13 @@ function session(phase, limits, shape, message, failed, hidden) {
   return { phase: phase, limits: limits, shape: shape, message: message, failed: failed, hidden: !!hidden }
 }
 
+// Nothing drawn but `message`.
+function closed(message, failed) {
+  return session("closed", null, null, message, failed)
+}
+
 function initial() {
-  return session("closed", null, null, "", false)
+  return closed("", false)
 }
 
 // The Tune VM button. `canTune` is Lifecycle's: the VM is off. The limits are
@@ -102,10 +107,17 @@ function initial() {
 function toggle(state, canTune) {
   if (state.phase === "applying") return { state: state, effect: null }
   if (state.phase !== "closed") {
-    return { state: session("closed", null, null, state.message, state.failed), effect: null }
+    return { state: closed(state.message, state.failed), effect: null }
   }
   if (!canTune) return { state: state, effect: null }
   return { state: session("loading", null, null, "", false), effect: "limits" }
+}
+
+var LIMIT_KEYS = ["hostCores", "hostRamGb", "freeGb", "cores", "ramGb", "diskGb"]
+
+function isLimits(value) {
+  if (!value || typeof value !== "object") return false
+  return LIMIT_KEYS.every(function(key) { return typeof value[key] === "number" })
 }
 
 // What `winvm-tune limits` printed. Anything but its one JSON object leaves
@@ -118,8 +130,8 @@ function loaded(state, text) {
   } catch (e) {
     limits = null
   }
-  if (!limits || typeof limits !== "object" || Array.isArray(limits)) {
-    return session("closed", null, null, "The VM's configuration could not be read.", true)
+  if (!isLimits(limits)) {
+    return closed("The VM's configuration could not be read.", true)
   }
   return session("editing", limits, seed(limits), "", false)
 }
@@ -147,14 +159,14 @@ function apply(state) {
 function applied(state, code, stderr) {
   if (state.phase !== "applying") return state
   if (code === 0) {
-    return session("closed", null, null, "Saved. " + verdict(state.limits, state.shape).text, false)
+    return closed("Saved. " + verdict(state.limits, state.shape).text, false)
   }
   var lines = String(stderr || "").trim().split("\n")
   var said = lines[lines.length - 1]
   // The password prompt was closed: nothing was written.
   var dismissed = /dismissed/i.test(said)
   var message = dismissed ? "" : (said || "The VM's configuration could not be written.")
-  if (state.hidden) return session("closed", null, null, message, !dismissed)
+  if (state.hidden) return closed(message, !dismissed)
   return session("editing", state.limits, state.shape, message, !dismissed)
 }
 
@@ -162,7 +174,7 @@ function hide(state, message, failed) {
   if (state.phase === "applying") {
     return session("applying", state.limits, state.shape, message, failed, true)
   }
-  return session("closed", null, null, message, failed)
+  return closed(message, failed)
 }
 
 // The panel closed: the section goes, and so does what it said.

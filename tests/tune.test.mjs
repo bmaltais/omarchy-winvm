@@ -119,7 +119,7 @@ test("the limits open the controls on the shape the VM has", () => {
 })
 
 test("limits that cannot be read close the section and say so", () => {
-  for (const line of ["", "not json", "null", "[]"]) {
+  for (const line of ["", "not json", "null", "[]", "{}", '{"hostCores":12}', limitsLine.replace("64", '"64G"')]) {
     const v = T.view(T.loaded(T.toggle(T.initial(), true).state, line))
     assert.equal(v.selected, false, line)
     assert.equal(v.open, false, line)
